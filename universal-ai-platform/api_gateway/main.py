@@ -15,8 +15,32 @@ from flask_cors import CORS
 import threading
 import queue
 
-from agent_platform.agent_service import AgentConfig, get_platform_service
+import sys
+from pathlib import Path
+
+# Add the current directory to Python path for relative imports
+sys.path.append(str(Path(__file__).parent.parent))
+
+try:
+    from agent_platform.agent_service import AgentConfig, get_platform_service
+except ImportError:
+    # Fallback to mock service if LiveKit dependencies are not available
+    from agent_platform.mock_service import AgentConfig, get_platform_service
+
 from billing.usage_tracker import UsageTracker
+
+# Import multimodal endpoints
+try:
+    from api_gateway.voice_endpoints import voice_bp
+    from api_gateway.vision_endpoints import vision_bp
+    from api_gateway.realtime_endpoints import realtime_bp
+except ImportError as e:
+    # Create placeholder blueprints if import fails
+    from flask import Blueprint
+    voice_bp = Blueprint('voice', __name__)
+    vision_bp = Blueprint('vision', __name__)
+    realtime_bp = Blueprint('realtime', __name__)
+    logger.warning(f"Failed to import multimodal endpoints: {e}")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -25,9 +49,15 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
-# Global state management
-active_sessions: Dict[str, Dict] = {}
-message_queues: Dict[str, queue.Queue] = {}
+# Register multimodal endpoint blueprints
+app.register_blueprint(voice_bp)
+app.register_blueprint(vision_bp)
+app.register_blueprint(realtime_bp)
+
+# Import shared state
+from api_gateway.shared_state import active_sessions, message_queues
+
+# Global state management uses shared module
 usage_tracker = UsageTracker()
 
 class APIGateway:

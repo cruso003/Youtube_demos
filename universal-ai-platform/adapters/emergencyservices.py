@@ -167,3 +167,83 @@ class EmergencyservicesAdapter(BusinessLogicAdapter):
             return "natural_disaster"
         
         return None
+    
+    # Multimodal method implementations
+    def get_voice_settings(self) -> Dict[str, Any]:
+        """Get voice settings optimized for emergency services"""
+        return {
+            "voice_id": "a0e99841-438c-4a64-b679-ae501e7d6091",  # Clear, authoritative voice
+            "model": "sonic-english",
+            "output_format": "pcm_16000", 
+            "speed": 0.95,  # Slightly slower for clarity in emergencies
+            "emotion": "calm_authoritative"
+        }
+    
+    def get_vision_instructions(self) -> str:
+        """Get vision analysis instructions for emergency assessment"""
+        return """Analyze this image for emergency response purposes. Focus on:
+
+        IMMEDIATE SAFETY ASSESSMENT:
+        - Visible injuries or medical conditions
+        - Fire, smoke, or hazardous materials
+        - Structural damage or unsafe conditions
+        - Number of people involved and their apparent condition
+        - Environmental hazards (water, electrical, chemical)
+
+        LOCATION ANALYSIS:
+        - Type of location (residential, commercial, vehicle, outdoor)
+        - Access points for emergency responders
+        - Obstacles that might impede emergency response
+        - Landmarks or identifying features
+
+        EMERGENCY TYPE CLASSIFICATION:
+        - Medical emergency indicators
+        - Fire/explosion evidence
+        - Crime scene indicators
+        - Natural disaster effects
+        - Traffic/vehicle incidents
+
+        RESPONSE PRIORITIES:
+        - Immediate life threats
+        - Rescue accessibility
+        - Resource requirements (ambulance, fire, police)
+        - Special equipment needs
+
+        Provide a structured analysis with clear priorities for emergency response."""
+    
+    async def process_realtime_event(self, event: Dict[str, Any]) -> Optional[str]:
+        """Process real-time events for emergency context"""
+        event_type = event.get("type", "")
+        
+        if event_type == "caller_distress":
+            return "I understand this is a stressful situation. Take a deep breath. Help is on the way, and I'm here to guide you through this."
+        
+        elif event_type == "emergency_escalation":
+            return "This situation requires immediate escalation. I'm alerting emergency responders now with high priority."
+        
+        elif event_type == "location_confirmed":
+            return "Thank you for confirming your location. Emergency responders are being dispatched to your exact location."
+        
+        elif event_type == "injury_reported":
+            return "I've noted the injury details. Keep the person still and conscious if possible. Don't move them unless there's immediate danger."
+        
+        elif event_type == "fire_smoke_detected":
+            return "If there's fire or smoke, get to safety immediately. Don't go back for belongings. Fire department is being dispatched."
+        
+        return None
+    
+    def get_conversation_context(self) -> Dict[str, Any]:
+        """Get conversation context for emergency services"""
+        return {
+            "domain": "emergency_services",
+            "emergency_types": self.emergency_types,
+            "interaction_style": "calm_authoritative",
+            "response_length": "short_clear",
+            "priority": "life_safety",
+            "information_gathering": "systematic",
+            "escalation_triggers": self.escalation_keywords,
+            "location_priority": True,
+            "time_sensitivity": "high",
+            "reassurance_level": "high",
+            "instruction_clarity": "maximum"
+        }

@@ -103,19 +103,21 @@ universal-ai-platform/
 ## 🎯 Key Features
 
 ### Multimodal Capabilities
-- **Voice**: Speech-to-text and text-to-speech
-- **Vision**: Image analysis and processing
-- **Text**: Natural language conversation
+- **Voice**: Speech-to-text (Deepgram) and text-to-speech (Cartesia)
+- **Vision**: Image analysis and OCR (OpenAI Vision)
+- **Text**: Natural language conversation (OpenAI)
+- **Real-time**: Live audio/video sessions (LiveKit)
+- **Phone**: Voice calling integration (Twilio)
 
 ### Business Logic Adapters
-- **Language Learning**: Optimized for educational applications
-- **Emergency Services**: Configured for emergency response scenarios
+- **Language Learning**: Optimized for educational applications with pronunciation feedback
+- **Emergency Services**: Configured for emergency response scenarios with safety analysis
 - **Custom Adapters**: Framework for building domain-specific logic
 
 ### Usage Tracking & Billing
 - **Multiple Plans**: Starter, Professional, Enterprise
-- **Real-time Tracking**: Sessions, messages, images, duration
-- **Automated Billing**: Cost calculation based on usage
+- **Real-time Tracking**: Sessions, messages, images, voice, real-time duration
+- **Automated Billing**: Cost calculation based on multimodal usage
 
 ### Client SDKs
 - **Python**: Full async support with high-level abstractions
@@ -131,6 +133,11 @@ Set up your environment variables in `.env`:
 OPENAI_API_KEY=your_openai_api_key
 DEEPGRAM_API_KEY=your_deepgram_api_key
 CARTESIA_API_KEY=your_cartesia_api_key
+
+# Phone Integration (Twilio)
+TWILIO_ACCOUNT_SID=your_twilio_account_sid
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_PHONE_NUMBER=your_twilio_phone_number
 
 # LiveKit Configuration (for full functionality)
 LIVEKIT_URL=wss://your-livekit-server.com
