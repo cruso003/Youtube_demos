@@ -353,3 +353,117 @@ class UsageTracker:
         except Exception as e:
             logger.error(f"Failed to calculate bill: {e}")
             return {}
+    
+    # New multimodal usage tracking methods
+    async def track_voice_processed(self, agent_id: str, session_id: str, duration_seconds: float, data_size_bytes: int):
+        """Track voice processing usage"""
+        metrics = UsageMetrics(
+            agent_id=agent_id,
+            session_id=session_id,
+            timestamp=datetime.now(),
+            event_type="voice_processed",
+            duration_seconds=duration_seconds,
+            data_size_bytes=data_size_bytes
+        )
+        await self._record_metrics(metrics)
+    
+    async def track_voice_generated(self, agent_id: str, session_id: str, text_length: int, audio_size_bytes: int):
+        """Track voice generation (TTS) usage"""
+        metrics = UsageMetrics(
+            agent_id=agent_id,
+            session_id=session_id,
+            timestamp=datetime.now(),
+            event_type="voice_generated",
+            tokens_used=text_length,  # Using text length as token approximation
+            data_size_bytes=audio_size_bytes
+        )
+        await self._record_metrics(metrics)
+    
+    async def track_voice_conversation(self, agent_id: str, session_id: str, input_duration: float, output_text_length: int, input_size_bytes: int):
+        """Track complete voice conversation usage"""
+        metrics = UsageMetrics(
+            agent_id=agent_id,
+            session_id=session_id,
+            timestamp=datetime.now(),
+            event_type="voice_conversation",
+            duration_seconds=input_duration,
+            tokens_used=output_text_length,
+            data_size_bytes=input_size_bytes
+        )
+        await self._record_metrics(metrics)
+    
+    async def track_ocr_processed(self, agent_id: str, session_id: str, data_size_bytes: int, language: str = "en"):
+        """Track OCR processing usage"""
+        metrics = UsageMetrics(
+            agent_id=agent_id,
+            session_id=session_id,
+            timestamp=datetime.now(),
+            event_type="ocr_processed",
+            data_size_bytes=data_size_bytes
+        )
+        await self._record_metrics(metrics)
+    
+    async def track_image_conversation(self, agent_id: str, session_id: str, image_size_bytes: int, response_text_length: int, has_text_prompt: bool = False):
+        """Track complete image conversation usage"""
+        metrics = UsageMetrics(
+            agent_id=agent_id,
+            session_id=session_id,
+            timestamp=datetime.now(),
+            event_type="image_conversation",
+            tokens_used=response_text_length,
+            data_size_bytes=image_size_bytes
+        )
+        await self._record_metrics(metrics)
+    
+    async def track_scene_analysis(self, agent_id: str, session_id: str, analysis_type: str, data_size_bytes: int):
+        """Track specialized scene analysis usage"""
+        metrics = UsageMetrics(
+            agent_id=agent_id,
+            session_id=session_id,
+            timestamp=datetime.now(),
+            event_type="scene_analysis",
+            data_size_bytes=data_size_bytes
+        )
+        await self._record_metrics(metrics)
+    
+    async def track_realtime_session_start(self, agent_id: str, session_id: str, room_name: str):
+        """Track real-time session start"""
+        metrics = UsageMetrics(
+            agent_id=agent_id,
+            session_id=session_id,
+            timestamp=datetime.now(),
+            event_type="realtime_session_start"
+        )
+        await self._record_metrics(metrics)
+    
+    async def track_realtime_session_end(self, agent_id: str, session_id: str, duration_seconds: float):
+        """Track real-time session end"""
+        metrics = UsageMetrics(
+            agent_id=agent_id,
+            session_id=session_id,
+            timestamp=datetime.now(),
+            event_type="realtime_session_end",
+            duration_seconds=duration_seconds
+        )
+        await self._record_metrics(metrics)
+    
+    async def track_phone_call_start(self, agent_id: str, session_id: str, to_number: str, call_sid: str):
+        """Track phone call initiation"""
+        metrics = UsageMetrics(
+            agent_id=agent_id,
+            session_id=session_id,
+            timestamp=datetime.now(),
+            event_type="phone_call_start"
+        )
+        await self._record_metrics(metrics)
+    
+    async def track_phone_call_end(self, agent_id: str, session_id: str, call_sid: str, duration_seconds: float):
+        """Track phone call completion"""
+        metrics = UsageMetrics(
+            agent_id=agent_id,
+            session_id=session_id,
+            timestamp=datetime.now(),
+            event_type="phone_call_end",
+            duration_seconds=duration_seconds
+        )
+        await self._record_metrics(metrics)

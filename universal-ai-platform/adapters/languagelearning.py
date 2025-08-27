@@ -86,3 +86,73 @@ class LanguagelearningAdapter(BusinessLogicAdapter):
         
         # If more than 40% of words are common English words, assume it's English
         return len(words) > 0 and (english_count / len(words)) > 0.4
+    
+    # Multimodal method implementations
+    def get_voice_settings(self) -> Dict[str, Any]:
+        """Get voice settings optimized for language learning"""
+        # Use a voice that's clear and good for pronunciation practice
+        voice_settings = {
+            "voice_id": "a0e99841-438c-4a64-b679-ae501e7d6091",  # Clear, educational voice
+            "model": "sonic-english", 
+            "output_format": "pcm_16000",
+            "speed": 0.9,  # Slightly slower for better comprehension
+            "emotion": "encouraging"
+        }
+        
+        # Adjust voice based on target language
+        if self.target_language.lower() == "spanish":
+            voice_settings["model"] = "sonic-multilingual"
+            voice_settings["voice_id"] = "87748186-23bb-4158-a1eb-332911b0b708"  # Spanish voice
+        elif self.target_language.lower() == "french":
+            voice_settings["model"] = "sonic-multilingual"
+            voice_settings["voice_id"] = "95856005-0332-41b0-935f-352e296aa0df"  # French voice
+        
+        return voice_settings
+    
+    def get_vision_instructions(self) -> str:
+        """Get vision analysis instructions for language learning"""
+        return f"""Analyze this image from a language learning perspective for {self.target_language}.
+
+        Please:
+        1. Identify any text visible in the image and read it in {self.target_language}
+        2. Describe objects, people, and scenes using {self.target_language} vocabulary at a {self.proficiency_level} level
+        3. Provide cultural context if the image shows culturally relevant content
+        4. Suggest conversation topics or vocabulary practice based on what you see
+        5. If there's text in {self.target_language}, explain difficult words and grammar
+        6. Offer pronunciation tips for any {self.target_language} words you mention
+
+        Adapt your language complexity to the {self.proficiency_level} proficiency level.
+        Be encouraging and focus on learning opportunities."""
+    
+    async def process_realtime_event(self, event: Dict[str, Any]) -> Optional[str]:
+        """Process real-time events for language learning context"""
+        event_type = event.get("type", "")
+        
+        if event_type == "pronunciation_attempt":
+            # User is trying to pronounce something
+            return f"Great pronunciation practice! Remember to focus on the {self.target_language} sounds we've been working on."
+        
+        elif event_type == "vocabulary_question":
+            # User asking about vocabulary
+            return f"That's an excellent {self.target_language} vocabulary question! Let me help you with that."
+        
+        elif event_type == "grammar_correction":
+            # Grammar correction needed
+            return "Let me help you with that grammar structure. Don't worry, making mistakes is part of learning!"
+        
+        return None
+    
+    def get_conversation_context(self) -> Dict[str, Any]:
+        """Get conversation context for language learning sessions"""
+        return {
+            "domain": "language_learning",
+            "target_language": self.target_language,
+            "proficiency_level": self.proficiency_level,
+            "conversation_topics": self.conversation_topics,
+            "interaction_style": "encouraging_teacher",
+            "response_length": "medium",
+            "correction_style": "gentle",
+            "encouragement_frequency": "high",
+            "cultural_context": True,
+            "pronunciation_focus": True
+        }

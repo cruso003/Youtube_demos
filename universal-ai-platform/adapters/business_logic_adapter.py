@@ -38,6 +38,33 @@ class BusinessLogicAdapter(ABC):
         """Process text input - return modified text or None for default processing"""
         pass
     
+    # New multimodal methods
+    def get_voice_settings(self) -> Dict[str, Any]:
+        """Get voice settings for TTS output - override in subclasses"""
+        return {
+            "voice_id": "a0e99841-438c-4a64-b679-ae501e7d6091",  # Default voice
+            "model": "sonic-english",
+            "output_format": "pcm_16000",
+            "speed": 1.0,
+            "emotion": "neutral"
+        }
+    
+    def get_vision_instructions(self) -> str:
+        """Get vision analysis instructions - override in subclasses"""
+        return "Analyze this image and provide a detailed description of what you see."
+    
+    async def process_realtime_event(self, event: Dict[str, Any]) -> Optional[str]:
+        """Process real-time events (voice, video, etc.) - override in subclasses"""
+        return None
+    
+    def get_conversation_context(self) -> Dict[str, Any]:
+        """Get conversation context for real-time sessions - override in subclasses"""
+        return {
+            "domain": "general",
+            "interaction_style": "helpful",
+            "response_length": "medium"
+        }
+    
     @staticmethod
     def load(adapter_name: str) -> 'BusinessLogicAdapter':
         """Load adapter by name"""
@@ -64,3 +91,16 @@ class DefaultAdapter(BusinessLogicAdapter):
     
     async def process_text_input(self, text: str, chat_ctx: ChatContext) -> Optional[str]:
         return None  # Use original text
+    
+    # Default implementations for multimodal methods
+    def get_voice_settings(self) -> Dict[str, Any]:
+        return super().get_voice_settings()  # Use base defaults
+    
+    def get_vision_instructions(self) -> str:
+        return super().get_vision_instructions()  # Use base defaults
+    
+    async def process_realtime_event(self, event: Dict[str, Any]) -> Optional[str]:
+        return None  # No special real-time processing
+    
+    def get_conversation_context(self) -> Dict[str, Any]:
+        return super().get_conversation_context()  # Use base defaults
