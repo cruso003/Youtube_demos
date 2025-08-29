@@ -1,4 +1,4 @@
-# Universal AI Agent Platform
+# Nexus AI Agent Platform
 
 A complete SaaS platform that enables businesses to integrate multimodal AI agents into their applications without building AI infrastructure themselves.
 

@@ -1,0 +1,49 @@
+{
+  "name": "nexusai-sdk",
+  "version": "1.0.0",
+  "description": "JavaScript SDK for NexusAI - AI Agent Platform for Businesses",
+  "main": "nexusai-sdk.js",
+  "types": "nexusai-sdk.d.ts",
+  "files": [
+    "nexusai-sdk.js",
+    "nexusai-sdk.d.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "jest",
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "nlp",
+    "voice",
+    "vision",
+    "multimodal",
+    "business",
+    "africa",
+    "nexusai"
+  ],
+  "author": "NexusAI <support@nexusai.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cruso003/Youtube_demos.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cruso003/Youtube_demos/issues"
+  },
+  "homepage": "https://nexusai.com",
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "jest": "^29.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

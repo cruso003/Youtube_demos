@@ -800,4 +800,4 @@ class Config:
 
 ---
 
-**Next**: Try the [Emergency Services Example](/examples/language-learning) or learn about [Custom Adapters](/examples/language-learning).
+**Next**: Learn about [Business Logic Adapters](/docs/guides/adapters) or check out the [API Reference](/docs/api) for more advanced features.

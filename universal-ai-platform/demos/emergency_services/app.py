@@ -3,15 +3,29 @@ Emergency Services Demo Application
 Demonstrates the Universal AI Agent Platform with an emergency response use case
 """
 
+import asyncio
 import sys
-import time
-from pathlib import Path
+import os
 from datetime import datetime
+from pathlib import Path
+import re
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Add the parent directory to sys.path to import our modules
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Add the SDK path
 sys.path.append(str(Path(__file__).parent.parent.parent / "client_sdks" / "python"))
 
 from universal_ai_sdk import UniversalAIClient, AgentConfig, AgentSession
+try:
+    from services.phone_service import PhoneService
+except ImportError:
+    print("⚠️  Phone service not available - call features will be disabled")
+    PhoneService = None
 
 class EmergencyServicesApp:
     """Emergency services dispatcher demo application"""
@@ -21,6 +35,14 @@ class EmergencyServicesApp:
         self.client = UniversalAIClient(api_url)
         self.session: AgentSession = None
         self.emergency_log = []
+        
+        # Debug: Check if environment variables are loaded
+        print(f"🔧 Debug - Twilio SID present: {'Yes' if os.getenv('TWILIO_ACCOUNT_SID') else 'No'}")
+        print(f"🔧 Debug - Twilio Token present: {'Yes' if os.getenv('TWILIO_AUTH_TOKEN') else 'No'}")
+        print(f"🔧 Debug - Twilio Phone present: {'Yes' if os.getenv('TWILIO_PHONE_NUMBER') else 'No'}")
+        
+        self.phone_service = PhoneService() if PhoneService else None
+        self.emergency_keywords = ["fire", "medical", "police", "urgent", "help", "emergency", "911", "accident", "injured", "bleeding"]
     
     def start_emergency_session(self):
         """Start a new emergency services session"""
@@ -65,6 +87,88 @@ class EmergencyServicesApp:
             print(f"❌ Failed to create emergency session: {e}")
             return False
     
+    def assess_emergency_severity(self, message: str) -> str:
+        """Assess the severity of an emergency based on keywords"""
+        message_lower = message.lower()
+        
+        # Critical keywords that trigger immediate response
+        critical_keywords = ["shooting", "fire", "heart attack", "not breathing", "unconscious", "bleeding heavily", "overdose", "car accident", "explosion"]
+        high_keywords = ["injured", "hurt", "chest pain", "difficulty breathing", "assault", "robbery", "domestic violence"]
+        medium_keywords = ["suspicious", "theft", "vandalism", "noise complaint", "minor injury"]
+        
+        for keyword in critical_keywords:
+            if keyword in message_lower:
+                return "critical"
+                
+        for keyword in high_keywords:
+            if keyword in message_lower:
+                return "high"
+                
+        for keyword in medium_keywords:
+            if keyword in message_lower:
+                return "medium"
+                
+        return "low"
+    
+    async def trigger_emergency_call(self, phone_number: str, severity: str, details: str) -> dict:
+        """Trigger an emergency call to dispatch services"""
+        try:
+            print(f"🚨 TRIGGERING EMERGENCY CALL - Severity: {severity.upper()}")
+            print(f"📞 Calling emergency services at: {phone_number}")
+            
+            if not self.phone_service:
+                print("⚠️  Phone service not available - simulating call")
+                return {
+                    "success": True,
+                    "call_sid": f"SIMULATED_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    "status": "simulated",
+                    "mock": True,
+                    "message": "Phone service not configured - call simulation only"
+                }
+            
+            # Create session ID for the call
+            call_session_id = f"emergency_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # Prepare adapter configuration for emergency call
+            adapter_config = {
+                "adapter_name": "emergencyservices",
+                "severity": severity,
+                "details": details,
+                "capabilities": ["voice", "phone"]
+            }
+            
+            # Initiate call using phone service
+            call_result = await self.phone_service.initiate_call(
+                to_number=phone_number,
+                session_id=call_session_id,
+                adapter_config=adapter_config
+            )
+            
+            if call_result.get("success"):
+                print(f"✅ Emergency call initiated successfully!")
+                print(f"📋 Call SID: {call_result.get('call_sid')}")
+                print(f"🔗 Session ID: {call_session_id}")
+                
+                # Log the emergency call
+                self.emergency_log.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "event": "emergency_call_triggered",
+                    "severity": severity,
+                    "call_sid": call_result.get('call_sid'),
+                    "phone_number": phone_number,
+                    "details": details
+                })
+                
+                return call_result
+            else:
+                print(f"❌ Failed to initiate emergency call: {call_result.get('error')}")
+                return call_result
+                
+        except Exception as e:
+            error_msg = f"Emergency call failed: {e}"
+            print(f"❌ {error_msg}")
+            return {"success": False, "error": error_msg}
+
     def handle_emergency_call(self):
         """Simulate handling an emergency call"""
         if not self.session:
@@ -103,6 +207,36 @@ class EmergencyServicesApp:
                     "speaker": "caller",
                     "message": caller_input
                 })
+                
+                # Assess emergency severity
+                severity = self.assess_emergency_severity(caller_input)
+                
+                # Check if this warrants an emergency call
+                if severity in ["critical", "high"]:
+                    print(f"\n🚨 SEVERITY LEVEL: {severity.upper()}")
+                    trigger_call = input("🔥 This appears to be a serious emergency. Trigger call to dispatch? (y/n): ").strip().lower()
+                    
+                    if trigger_call == 'y':
+                        # Ask for dispatch phone number (in real scenario, this would be automatic)
+                        dispatch_number = input("📞 Enter dispatch phone number (or press Enter for demo): ").strip()
+                        if not dispatch_number:
+                            dispatch_number = "+15551234567"  # Demo number
+                        
+                        # Trigger emergency call asynchronously
+                        print("🚨 Triggering emergency call...")
+                        try:
+                            call_result = asyncio.run(self.trigger_emergency_call(
+                                phone_number=dispatch_number,
+                                severity=severity,
+                                details=caller_input
+                            ))
+                            
+                            if call_result.get("success"):
+                                print(f"✅ Emergency dispatch notified! Call SID: {call_result.get('call_sid')}")
+                            else:
+                                print(f"❌ Call failed: {call_result.get('error')}")
+                        except Exception as e:
+                            print(f"❌ Call trigger error: {e}")
                 
                 # Send message to emergency AI
                 self.session.send_message(caller_input)
@@ -216,6 +350,73 @@ class EmergencyServicesApp:
         except Exception as e:
             print(f"❌ Failed to get system status: {e}")
     
+    def test_emergency_call_trigger(self):
+        """Test the emergency call triggering functionality"""
+        print("\n🧪 EMERGENCY CALL TRIGGER TEST")
+        print("=" * 50)
+        print("This feature demonstrates automatic emergency call triggering")
+        print("based on severity assessment of reported incidents.")
+        print("-" * 50)
+        
+        # Test scenarios
+        test_scenarios = [
+            ("There's a fire in my building!", "critical"),
+            ("Someone is having a heart attack!", "critical"),
+            ("I've been in a car accident, need help", "high"),
+            ("There's a suspicious person outside", "medium"),
+            ("My neighbor is playing loud music", "low")
+        ]
+        
+        print("\n📋 Testing severity assessment:")
+        for message, expected in test_scenarios:
+            severity = self.assess_emergency_severity(message)
+            status = "✅" if severity == expected else "❌"
+            print(f"{status} \"{message[:40]}...\" → {severity.upper()}")
+        
+        print("\n🔥 Now testing actual call trigger...")
+        print("Enter an emergency scenario to test call triggering:")
+        
+        user_scenario = input("📝 Emergency scenario: ").strip()
+        if not user_scenario:
+            print("❌ No scenario provided.")
+            return
+        
+        severity = self.assess_emergency_severity(user_scenario)
+        print(f"🎯 Assessed severity: {severity.upper()}")
+        
+        if severity in ["critical", "high"]:
+            print(f"🚨 This {severity} emergency would trigger an automatic call!")
+            
+            trigger_test = input("📞 Test call trigger? (y/n): ").strip().lower()
+            if trigger_test == 'y':
+                # Get test phone number
+                test_number = input("📞 Enter test phone number (or press Enter for demo): ").strip()
+                if not test_number:
+                    test_number = "+15551234567"  # Demo number
+                
+                print("🚨 Triggering test emergency call...")
+                try:
+                    call_result = asyncio.run(self.trigger_emergency_call(
+                        phone_number=test_number,
+                        severity=severity,
+                        details=user_scenario
+                    ))
+                    
+                    if call_result.get("success"):
+                        print(f"✅ Test call successful!")
+                        print(f"📋 Call details:")
+                        print(f"   - Call SID: {call_result.get('call_sid')}")
+                        print(f"   - Status: {call_result.get('status')}")
+                        print(f"   - Mock call: {call_result.get('mock', False)}")
+                    else:
+                        print(f"❌ Test call failed: {call_result.get('error')}")
+                        
+                except Exception as e:
+                    print(f"❌ Test error: {e}")
+        else:
+            print(f"ℹ️  This {severity} priority incident would NOT trigger an automatic call.")
+            print("   Emergency calls are only triggered for 'critical' and 'high' severity incidents.")
+
     def end_emergency_session(self):
         """End the current emergency session"""
         if not self.session:
@@ -250,24 +451,27 @@ def main():
         print("\n🚨 Emergency Services Options:")
         print("1. Start Emergency Session")
         print("2. Handle Emergency Call (Simulation)")
-        print("3. View Emergency Log")
-        print("4. System Status")
-        print("5. End Emergency Session")
-        print("6. Exit")
+        print("3. Test Emergency Call Trigger")
+        print("4. View Emergency Log")
+        print("5. System Status")
+        print("6. End Emergency Session")
+        print("7. Exit")
         
-        choice = input("\nSelect an option (1-6): ").strip()
+        choice = input("\nSelect an option (1-7): ").strip()
         
         if choice == "1":
             app.start_emergency_session()
         elif choice == "2":
             app.handle_emergency_call()
         elif choice == "3":
-            app.view_emergency_log()
+            app.test_emergency_call_trigger()
         elif choice == "4":
-            app.get_system_status()
+            app.view_emergency_log()
         elif choice == "5":
-            app.end_emergency_session()
+            app.get_system_status()
         elif choice == "6":
+            app.end_emergency_session()
+        elif choice == "7":
             print("\n👋 Thank you for using the Emergency Services Demo!")
             print("⚠️  Remember: This was a demonstration only!")
             app.end_emergency_session()

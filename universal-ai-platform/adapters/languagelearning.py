@@ -25,6 +25,49 @@ class LanguagelearningAdapter(BusinessLogicAdapter):
             "daily activities", "food", "travel", "hobbies"
         ]) if config else ["daily activities", "food", "travel", "hobbies"]
     
+    def get_system_instructions(self) -> str:
+        """Get system instructions for language learning"""
+        if self.proficiency_level.lower() == "beginner":
+            return f"""You are a friendly {self.target_language} language learning assistant for BEGINNERS. 
+            
+            Guidelines for beginners:
+            - Always provide English translations/explanations in parentheses
+            - Start with simple greetings and basic vocabulary
+            - Use mostly English with {self.target_language} words mixed in
+            - Explain pronunciation when introducing new words
+            - Be very encouraging and patient
+            - Example: "Hola (OH-lah, means 'hello') - great pronunciation!"
+            
+            Topics to cover: {', '.join(self.conversation_topics)}
+            Always explain what new {self.target_language} words mean in English.
+            """
+        elif self.proficiency_level.lower() == "intermediate":
+            return f"""You are a friendly {self.target_language} language learning assistant for INTERMEDIATE learners.
+            
+            Guidelines for intermediate:
+            - Mix {self.target_language} and English more naturally
+            - Provide translations when needed but encourage more {self.target_language}
+            - Correct mistakes gently with explanations
+            - Ask follow-up questions to keep conversation going
+            - Use slightly more complex vocabulary
+            
+            Topics to explore: {', '.join(self.conversation_topics)}
+            Help them build confidence while challenging them appropriately.
+            """
+        else:  # advanced
+            return f"""You are a friendly {self.target_language} language learning assistant for ADVANCED learners.
+            
+            Guidelines for advanced:
+            - Primarily speak in {self.target_language}
+            - Use complex grammar and vocabulary
+            - Provide cultural context and nuances
+            - Challenge them with idiomatic expressions
+            - Only use English for complex explanations
+            
+            Topics to discuss: {', '.join(self.conversation_topics)}
+            Help them achieve fluency and cultural understanding.
+            """
+    
     async def on_agent_enter(self, agent, room: rtc.Room):
         """Initialize language learning session"""
         logger.info(f"Language learning session started for {self.target_language} ({self.proficiency_level})")

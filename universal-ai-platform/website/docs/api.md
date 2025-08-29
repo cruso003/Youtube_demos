@@ -1,44 +1,64 @@
-# API Reference
+# NexusAI API Reference
 
-The Universal AI Agent Platform provides a comprehensive REST API for integrating multimodal AI agents into your applications.
+The NexusAI platform provides a comprehensive REST API for integrating multimodal AI agents into your applications. Built specifically for African businesses with local payment integration and optimized performance.
 
 ## Base URL
 
 ```
-http://localhost:8000/api/v1
+https://nexus.bits-innovate.com
 ```
-
-For production deployments, replace `localhost:8000` with your deployed API gateway URL.
 
 ## Authentication
 
-Currently, the platform supports optional API key authentication via the `Authorization` header:
+**Optional for Free Tier**: No API key required for testing (5 messages/day limit)
+
+**For Paid Tiers**: Use your API key in the Authorization header:
 
 ```http
 Authorization: Bearer YOUR_API_KEY
 ```
 
-:::info Development Mode
-API keys are optional during development. The platform will work without authentication for testing purposes.
-:::
+## Rate Limits
 
-## Agent Management
+| Tier | Daily Limit | Rate Limit | Session Limit |
+|------|-------------|------------|---------------|
+| Free | 5 messages | 1/minute | 1 active |
+| Starter | 1,000/month | 60/minute | 10 active |
+| Business | Unlimited | 600/minute | Unlimited |
+
+## Core Endpoints
+
+### Health Check
+
+Check the API status and your current usage.
+
+**Endpoint**: `GET /health`
+
+**Response**:
+```json
+{
+  "status": "healthy",
+  "active_sessions": 12,
+  "timestamp": "2025-08-28T22:03:19.519424"
+}
+```
 
 ### Create Agent Session
 
-Create a new AI agent session with specified capabilities and configuration.
+Create a new AI agent session with specified capabilities.
 
-**Endpoint**: `POST /agent/create`
+**Endpoint**: `POST /api/v1/agent/create`
 
 **Request Body**:
 ```json
 {
-  "instructions": "You are a helpful AI assistant",
+  "instructions": "You are a helpful assistant for African businesses",
   "capabilities": ["text", "voice", "vision"],
   "business_logic_adapter": "languagelearning",
   "custom_settings": {
-    "target_language": "Spanish",
-    "proficiency_level": "beginner"
+    "level": "beginner",
+    "native_language": "swahili",
+    "focus": "conversation"
   },
   "client_id": "your_client_id"
 }
@@ -46,8 +66,21 @@ Create a new AI agent session with specified capabilities and configuration.
 
 **Parameters**:
 - `instructions` (string, required): System instructions for the agent
-- `capabilities` (array, required): List of capabilities: `["text", "voice", "vision"]`
-- `business_logic_adapter` (string, optional): Adapter name (`languagelearning`, `emergencyservices`, or custom)
+- `capabilities` (array, required): Available: `["text", "voice", "vision"]`
+- `business_logic_adapter` (string, optional): `"languagelearning"`, `"emergencyservices"`, or `null`
+- `custom_settings` (object, optional): Adapter-specific configuration
+- `client_id` (string, optional): Your application identifier
+
+**Response**:
+```json
+{
+  "agent_id": "ead21db9-d5a4-4a93-ba74-fdc7ef477a93",
+  "session_id": "ead21db9-d5a4-4a93-ba74-fdc7ef477a93",
+  "capabilities": ["text", "voice"],
+  "message": "Agent session created successfully",
+  "status": "success"
+}
+```
 - `custom_settings` (object, optional): Adapter-specific configuration
 - `client_id` (string, optional): Identifier for tracking usage
 
@@ -64,7 +97,7 @@ Create a new AI agent session with specified capabilities and configuration.
 
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/api/v1/agent/create \
+curl -X POST https://nexus.bits-innovate.com/api/v1/agent/create \
   -H "Content-Type: application/json" \
   -d '{
     "instructions": "You are a helpful assistant",
@@ -100,7 +133,7 @@ Send a text message to an agent session.
 
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/api/v1/agent/abc-123/message \
+curl -X POST https://nexus.bits-innovate.com/api/v1/agent/abc-123/message \
   -H "Content-Type: application/json" \
   -d '{
     "message": "Hello!",
@@ -128,7 +161,7 @@ Send an image to an agent session for vision processing.
 
 **Example**:
 ```bash
-curl -X POST http://localhost:8000/api/v1/agent/abc-123/image \
+curl -X POST https://nexus.bits-innovate.com/api/v1/agent/abc-123/image \
   -F "image=@/path/to/image.jpg" \
   -F "message=What do you see in this image?"
 ```
@@ -163,7 +196,7 @@ Retrieve all messages from an agent session.
 
 **Example**:
 ```bash
-curl http://localhost:8000/api/v1/agent/abc-123/messages
+curl https://nexus.bits-innovate.com/api/v1/agent/abc-123/messages
 ```
 
 ### Get Session Status
@@ -390,7 +423,7 @@ X-RateLimit-Reset: 1642176000
 
 For real-time communication, the platform supports WebSocket connections:
 
-**Endpoint**: `ws://localhost:8000/ws/agent/{session_id}`
+**Endpoint**: `wss://nexus.bits-innovate.com/ws/agent/{session_id}`
 
 **Message Format**:
 ```json
@@ -403,7 +436,7 @@ For real-time communication, the platform supports WebSocket connections:
 
 **Example**:
 ```javascript
-const ws = new WebSocket('ws://localhost:8000/ws/agent/abc-123');
+const ws = new WebSocket('wss://nexus.bits-innovate.com/ws/agent/abc-123');
 
 ws.onmessage = function(event) {
     const data = JSON.parse(event.data);
@@ -425,7 +458,7 @@ import requests
 import json
 
 # 1. Create agent
-response = requests.post('http://localhost:8000/api/v1/agent/create', json={
+response = requests.post('https://nexus.bits-innovate.com/api/v1/agent/create', json={
     "instructions": "You are a vision-enabled assistant",
     "capabilities": ["text", "vision"],
     "business_logic_adapter": "languagelearning"
@@ -435,7 +468,7 @@ session_id = response.json()['session_id']
 print(f"Created session: {session_id}")
 
 # 2. Send text message
-requests.post(f'http://localhost:8000/api/v1/agent/{session_id}/message', json={
+requests.post(f'https://nexus.bits-innovate.com/api/v1/agent/{session_id}/message', json={
     "message": "Can you help me practice Spanish?",
     "type": "text"
 })
@@ -444,11 +477,11 @@ requests.post(f'http://localhost:8000/api/v1/agent/{session_id}/message', json={
 with open('image.jpg', 'rb') as f:
     files = {'image': f}
     data = {'message': 'What do you see in this image?'}
-    requests.post(f'http://localhost:8000/api/v1/agent/{session_id}/image', 
+    requests.post(f'https://nexus.bits-innovate.com/api/v1/agent/{session_id}/image', 
                   files=files, data=data)
 
 # 4. Get responses
-response = requests.get(f'http://localhost:8000/api/v1/agent/{session_id}/messages')
+response = requests.get(f'https://nexus.bits-innovate.com/api/v1/agent/{session_id}/messages')
 messages = response.json()['messages']
 
 for msg in messages:
@@ -463,7 +496,7 @@ const axios = require('axios');
 async function createMultimodalAgent() {
     try {
         // 1. Create agent
-        const createResponse = await axios.post('http://localhost:8000/api/v1/agent/create', {
+        const createResponse = await axios.post('https://nexus.bits-innovate.com/api/v1/agent/create', {
             instructions: "You are a helpful assistant",
             capabilities: ["text", "voice", "vision"]
         });
@@ -472,13 +505,13 @@ async function createMultimodalAgent() {
         console.log(`Created session: ${sessionId}`);
         
         // 2. Send message
-        await axios.post(`http://localhost:8000/api/v1/agent/${sessionId}/message`, {
+        await axios.post(`https://nexus.bits-innovate.com/api/v1/agent/${sessionId}/message`, {
             message: "Hello! Can you help me?",
             type: "text"
         });
         
         // 3. Get messages
-        const messagesResponse = await axios.get(`http://localhost:8000/api/v1/agent/${sessionId}/messages`);
+        const messagesResponse = await axios.get(`https://nexus.bits-innovate.com/api/v1/agent/${sessionId}/messages`);
         const messages = messagesResponse.data.messages;
         
         messages.forEach(msg => {
@@ -495,4 +528,4 @@ createMultimodalAgent();
 
 ---
 
-**Next Steps**: Explore the [SDK Documentation](/docs/sdks) for higher-level abstractions or check out [Examples](/examples/language-learning) for complete applications.
+**Next Steps**: Explore the [SDK Documentation](/docs/sdks) for higher-level abstractions or check out the [Getting Started Guide](/docs/getting-started) for complete setup instructions.

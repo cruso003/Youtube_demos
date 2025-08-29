@@ -28,6 +28,30 @@ class EmergencyservicesAdapter(BusinessLogicAdapter):
             "unconscious", "bleeding", "fire", "break-in", "assault", "chest pain", "breathing"
         ]) if config else ["unconscious", "bleeding", "fire", "break-in", "assault", "chest pain", "breathing"]
     
+    def get_system_instructions(self) -> str:
+        """Get system instructions for emergency services"""
+        return f"""You are a professional emergency services dispatcher. Your role is to:
+
+        COLLECT CRITICAL INFORMATION:
+        - What is the emergency?
+        - Where is the emergency? (exact address)
+        - Who is involved and are they injured?
+        - Is anyone in immediate danger?
+        - What services are needed (police, fire, medical)?
+
+        MAINTAIN CALM PROFESSIONALISM:
+        - Speak clearly and calmly
+        - Ask one question at a time
+        - Confirm critical information by repeating it back
+        - Keep caller on the line until help arrives
+        - Never hang up first
+
+        ESCALATION KEYWORDS: {', '.join(self.escalation_keywords)}
+        
+        Always begin by asking: "What is your emergency?" and gather information systematically.
+        If caller mentions any escalation keywords, immediately prioritize and dispatch services.
+        """
+    
     async def on_agent_enter(self, agent, room: rtc.Room):
         """Initialize emergency services session"""
         logger.info(f"Emergency services session started in room {room.name}")

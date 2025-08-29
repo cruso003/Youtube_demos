@@ -1,12 +1,16 @@
 """
 API Gateway for Universal AI Agent Platform
-Provides REST API endpoints for client integration
+Provides REST API endpoints with freemium rate limiting
 """
 
 import asyncio
 import json
 import logging
+import os
 import uuid
+import sys
+sys.path.append('..')
+from freemium_limits import check_freemium_limits, validate_free_tier_request, record_message_usage, record_session_creation, get_usage_info
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
@@ -14,6 +18,19 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import threading
 import queue
+
+# Add payment processing
+try:
+    from payment.mtn_payment import MTNMobileMoneyPayment, CreditManager
+except ImportError:
+    print("Warning: Payment module not found. Payment features will be disabled.")
+    MTNMobileMoneyPayment = None
+    CreditManager = None
+from openai import OpenAI
+
+# Configure logging first
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 import sys
 from pathlib import Path
@@ -28,18 +45,21 @@ except ImportError:
     from agent_platform.mock_service import AgentConfig, get_platform_service
 
 from billing.usage_tracker import UsageTracker
+from rate_limiter import rate_limiter
 
 # Import multimodal endpoints
 try:
     from api_gateway.voice_endpoints import voice_bp
     from api_gateway.vision_endpoints import vision_bp
     from api_gateway.realtime_endpoints import realtime_bp
+    from api_gateway.payment_endpoints import payment_bp
 except ImportError as e:
     # Create placeholder blueprints if import fails
     from flask import Blueprint
     voice_bp = Blueprint('voice', __name__)
     vision_bp = Blueprint('vision', __name__)
     realtime_bp = Blueprint('realtime', __name__)
+    payment_bp = Blueprint('payment', __name__)
     logger.warning(f"Failed to import multimodal endpoints: {e}")
 
 # Set up logging
@@ -53,6 +73,7 @@ CORS(app)
 app.register_blueprint(voice_bp)
 app.register_blueprint(vision_bp)
 app.register_blueprint(realtime_bp)
+app.register_blueprint(payment_bp)
 
 # Import shared state
 from api_gateway.shared_state import active_sessions, message_queues
@@ -119,10 +140,46 @@ def health_check():
         "active_sessions": len(active_sessions)
     })
 
-@app.route("/api/v1/agent/create", methods=["POST"])
-def create_agent():
-    """Create a new AI agent session"""
+@app.route("/api/v1/usage/check", methods=["GET"])
+def check_usage_limits():
+    """Check current freemium usage limits and plan information"""
     try:
+        usage_info = get_usage_info()
+        return jsonify({
+            "status": "success",
+            **usage_info
+        })
+    except Exception as e:
+        logger.error(f"Error checking usage: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to check usage limits"
+        }), 500
+
+@app.route("/api/v1/agent/create", methods=["POST"])
+@check_freemium_limits()
+def create_agent():
+    """Create a new AI agent session with freemium rate limiting"""
+    try:
+        # Get client IP and API key
+        client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.environ.get('REMOTE_ADDR', 'unknown'))
+        api_key = request.headers.get('Authorization', '').replace('Bearer ', '') or None
+        
+        # Check freemium limits
+        allowed, limit_info = rate_limiter.is_allowed(client_ip, api_key)
+        
+        if not allowed:
+            return jsonify({
+                "status": "error",
+                "message": limit_info.get("error", "Rate limit exceeded"),
+                "limit_info": limit_info,
+                "upgrade_info": {
+                    "message": "Upgrade to Business tier for unlimited access",
+                    "pricing": "$29/month - Perfect for African businesses",
+                    "features": ["Unlimited messages", "Priority support", "Custom adapters"]
+                } if limit_info.get("tier") == "free" else None
+            }), 429
+        
         config_data = request.get_json()
         
         # Validate required fields
@@ -148,6 +205,7 @@ def create_agent():
         }), 500
 
 @app.route("/api/v1/agent/<session_id>/message", methods=["POST"])
+@check_freemium_limits()
 def send_message(session_id: str):
     """Send a message to an agent session"""
     try:
@@ -179,6 +237,79 @@ def send_message(session_id: str):
         # Track message processing
         agent_config = active_sessions[session_id]["agent_config"]
         asyncio.run(usage_tracker.track_message_processed(agent_config.agent_id, session_id))
+        
+        # Process message and generate AI response
+        async def process_and_respond():
+            try:
+                # Load business logic adapter and generate response
+                response_content = "I understand your message. How can I help you today?"
+                
+                logger.info(f"Processing message for adapter: {agent_config.business_logic_adapter}")
+                logger.info(f"Custom settings: {agent_config.custom_settings}")
+                
+                if agent_config.business_logic_adapter:
+                    try:
+                        # Load the appropriate adapter
+                        if agent_config.business_logic_adapter == "languagelearning":
+                            from adapters.languagelearning import LanguagelearningAdapter
+                            adapter = LanguagelearningAdapter(agent_config.custom_settings)
+                            logger.info(f"Language learning adapter loaded for: {adapter.target_language}")
+                        elif agent_config.business_logic_adapter == "emergencyservices":
+                            from adapters.emergencyservices import EmergencyservicesAdapter
+                            adapter = EmergencyservicesAdapter(agent_config.custom_settings)
+                        else:
+                            adapter = None
+                        
+                        if adapter:
+                            # Get system instructions from adapter
+                            system_instructions = adapter.get_system_instructions()
+                            logger.info(f"System instructions: {system_instructions[:100]}...")
+                            
+                            # Generate AI response using OpenAI
+                            openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                            completion = openai_client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[
+                                    {"role": "system", "content": system_instructions},
+                                    {"role": "user", "content": message}
+                                ]
+                            )
+                            response_content = completion.choices[0].message.content
+                            logger.info(f"OpenAI response generated: {len(response_content)} characters")
+                            
+                    except Exception as adapter_error:
+                        logger.error(f"Adapter processing error: {adapter_error}")
+                        # Fallback to default response
+                
+                # Add AI response to queue
+                message_queues[session_id].put({
+                    "id": str(uuid.uuid4()),
+                    "type": "text",
+                    "content": response_content,
+                    "timestamp": datetime.now().isoformat(),
+                    "sender": "assistant"
+                })
+                
+                # Track AI response
+                await usage_tracker.track_message_processed(agent_config.agent_id, session_id)
+                
+            except Exception as e:
+                logger.error(f"Error processing AI response: {e}")
+                # Add error response
+                message_queues[session_id].put({
+                    "id": str(uuid.uuid4()),
+                    "type": "text",
+                    "content": "I apologize, but I encountered an error processing your message. Please try again.",
+                    "timestamp": datetime.now().isoformat(),
+                    "sender": "assistant"
+                })
+        
+        # Run async processing in background thread
+        def run_async():
+            asyncio.run(process_and_respond())
+        
+        thread = threading.Thread(target=run_async)
+        thread.start()
         
         return jsonify({
             "status": "success",
@@ -380,6 +511,27 @@ def list_active_sessions():
             "message": "Internal server error"
         }), 500
 
+@app.route('/ready', methods=['GET'])
+def readiness_check():
+    """Readiness check for Kubernetes"""
+    try:
+        # More thorough checks for readiness
+        openai_key = os.getenv('OPENAI_API_KEY')
+        if not openai_key:
+            return jsonify({"status": "not_ready", "reason": "OpenAI API key not configured"}), 503
+            
+        return jsonify({
+            "status": "ready",
+            "timestamp": datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "status": "not_ready", 
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 503
+
 @app.errorhandler(404)
 def not_found(error):
     """Handle 404 errors"""
@@ -396,6 +548,174 @@ def internal_error(error):
         "message": "Internal server error"
     }), 500
 
+# Payment Endpoints
+@app.route("/api/v1/payment/packages", methods=["GET"])
+def get_credit_packages():
+    """Get available credit packages"""
+    try:
+        if MTNMobileMoneyPayment is None:
+            return jsonify({
+                "status": "error",
+                "message": "Payment system not available"
+            }), 503
+        
+        mtn_payment = MTNMobileMoneyPayment()
+        packages = mtn_payment.get_credit_packages()
+        
+        return jsonify({
+            "status": "success",
+            "packages": packages,
+            "payment_methods": ["mtn_mobile_money", "bank_card"],
+            "supported_countries": ["Liberia"]
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting credit packages: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to get credit packages"
+        }), 500
+
+@app.route("/api/v1/payment/mtn/request", methods=["POST"])
+def request_mtn_payment():
+    """Request MTN Mobile Money payment for credits"""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ["phone_number", "package_type", "user_id"]
+        for field in required_fields:
+            if field not in data:
+                return jsonify({
+                    "status": "error",
+                    "message": f"Missing required field: {field}"
+                }), 400
+        
+        if MTNMobileMoneyPayment is None:
+            return jsonify({
+                "status": "error",
+                "message": "MTN Mobile Money not available"
+            }), 503
+        
+        # Initialize MTN payment processor
+        mtn_payment = MTNMobileMoneyPayment(
+            environment=os.getenv("MTN_ENVIRONMENT", "sandbox"),
+            target_environment="mtnliberia"
+        )
+        
+        # Request payment
+        payment_result = mtn_payment.request_payment(
+            phone_number=data["phone_number"],
+            package_type=data["package_type"],
+            user_id=data["user_id"]
+        )
+        
+        if payment_result.success:
+            return jsonify({
+                "status": "success",
+                "transaction_id": payment_result.transaction_id,
+                "reference_id": payment_result.reference_id,
+                "message": payment_result.message,
+                "payment_status": payment_result.status
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": payment_result.message
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"Error requesting MTN payment: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to process payment request"
+        }), 500
+
+@app.route("/api/v1/payment/status/<reference_id>", methods=["GET"])
+def check_payment_status(reference_id: str):
+    """Check payment status and add credits if successful"""
+    try:
+        if MTNMobileMoneyPayment is None:
+            return jsonify({
+                "status": "error",
+                "message": "Payment system not available"
+            }), 503
+        
+        # Initialize payment processor
+        mtn_payment = MTNMobileMoneyPayment(
+            environment=os.getenv("MTN_ENVIRONMENT", "sandbox"),
+            target_environment="mtnliberia"
+        )
+        
+        # Check payment status
+        status_result = mtn_payment.check_payment_status(reference_id)
+        
+        response_data = {
+            "status": "success",
+            "transaction_id": status_result.transaction_id,
+            "payment_status": status_result.status,
+            "message": status_result.message
+        }
+        
+        # If payment is successful, add credits to user account
+        if status_result.success and status_result.status == "successful":
+            # Extract user_id from reference_id (format: nexusai_userid_randomhex)
+            try:
+                user_id = reference_id.split("_")[1]
+                
+                # Get package info from reference
+                # TODO: Store package info with transaction for proper credit calculation
+                # For now, assume starter package (1000 credits)
+                credits_to_add = 1000
+                
+                if CreditManager:
+                    credit_manager = CreditManager()
+                    if credit_manager.add_credits(user_id, credits_to_add, reference_id):
+                        response_data["credits_added"] = credits_to_add
+                        response_data["message"] = f"Payment successful! {credits_to_add} credits added to your account."
+                    else:
+                        response_data["warning"] = "Payment successful but failed to add credits. Please contact support."
+                        
+            except Exception as e:
+                logger.error(f"Error adding credits after successful payment: {e}")
+                response_data["warning"] = "Payment successful but failed to add credits. Please contact support."
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error checking payment status: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to check payment status"
+        }), 500
+
+@app.route("/api/v1/user/<user_id>/credits", methods=["GET"])
+def get_user_credits(user_id: str):
+    """Get user's current credit balance"""
+    try:
+        if CreditManager is None:
+            return jsonify({
+                "status": "error",
+                "message": "Credit system not available"
+            }), 503
+        
+        credit_manager = CreditManager()
+        credits = credit_manager.get_user_credits(user_id)
+        
+        return jsonify({
+            "status": "success",
+            "user_id": user_id,
+            "credits": credits,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting user credits: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to get user credits"
+        }), 500
+
 if __name__ == "__main__":
-    logger.info("Starting Universal AI Agent Platform API Gateway")
+    logger.info("Starting NexusAI API Gateway")
     app.run(host="0.0.0.0", port=8000, debug=False)

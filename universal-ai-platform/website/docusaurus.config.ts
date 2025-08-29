@@ -5,8 +5,8 @@ import type * as Preset from '@docusaurus/preset-classic';
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 const config: Config = {
-  title: 'Universal AI Agent Platform',
-  tagline: 'Integrate multimodal AI agents into any application without building infrastructure',
+  title: 'NexusAI Documentation',
+  tagline: 'The Universal AI Agent Platform for Africa - API Documentation & Developer Guides',
   favicon: 'img/favicon.ico',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
@@ -15,15 +15,14 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: 'https://cruso003.github.io',
+  url: 'https://nexus-docs.bits-innovate.com',
   // Set the /<baseUrl>/ pathname under which your site is served
-  // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/Youtube_demos/',
+  baseUrl: '/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
   organizationName: 'cruso003', // Usually your GitHub org/user name.
-  projectName: 'Youtube_demos', // Usually your repo name.
+  projectName: 'nexusai-docs', // Usually your repo name.
 
   onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
@@ -42,10 +41,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/cruso003/Youtube_demos/tree/main/universal-ai-platform/website/',
+          // Remove edit links for professional deployment
         },
         blog: false, // Disable blog
         theme: {
@@ -59,17 +55,22 @@ const config: Config = {
     // Replace with your project's social card
     image: 'img/docusaurus-social-card.jpg',
     navbar: {
-      title: 'Universal AI Platform',
+      title: 'NexusAI Docs',
       logo: {
-        alt: 'Universal AI Platform Logo',
+        alt: 'NexusAI Logo',
         src: 'img/logo.svg',
       },
       items: [
         {
+          href: 'https://nexus.bits-innovate.com',
+          label: 'Home',
+          position: 'left',
+        },
+        {
           type: 'docSidebar',
           sidebarId: 'tutorialSidebar',
           position: 'left',
-          label: 'Docs',
+          label: 'Documentation',
         },
         {
           to: '/docs/api',
@@ -77,13 +78,13 @@ const config: Config = {
           position: 'left',
         },
         {
-          to: '/docs/examples/language-learning',
-          label: 'Examples',
+          to: '/docs/sdks',
+          label: 'SDKs',
           position: 'left',
         },
         {
-          href: 'https://github.com/cruso003/Youtube_demos/tree/main/universal-ai-platform',
-          label: 'GitHub',
+          href: 'https://bits-innovate.com',
+          label: 'BITS',
           position: 'right',
         },
       ],
@@ -91,6 +92,23 @@ const config: Config = {
     footer: {
       style: 'dark',
       links: [
+        {
+          title: 'NexusAI Platform',
+          items: [
+            {
+              label: 'Home',
+              href: 'https://nexus.bits-innovate.com',
+            },
+            {
+              label: 'Sign Up',
+              href: 'https://nexus.bits-innovate.com/signup',
+            },
+            {
+              label: 'Dashboard',
+              href: 'https://nexus.bits-innovate.com/dashboard',
+            },
+          ],
+        },
         {
           title: 'Documentation',
           items: [
@@ -109,19 +127,19 @@ const config: Config = {
           ],
         },
         {
-          title: 'Examples',
+          title: 'SDKs',
           items: [
             {
-              label: 'Language Learning',
-              to: '/docs/examples/language-learning',
+              label: 'JavaScript SDK',
+              href: 'https://www.npmjs.com/package/nexusai-sdk',
             },
             {
-              label: 'Emergency Services',
-              to: '/docs/examples/emergency-services',
+              label: 'Python SDK',
+              href: 'https://pypi.org/project/nexusai-sdk/',
             },
             {
-              label: 'Custom Adapters',
-              to: '/docs/examples/custom-adapters',
+              label: 'SDK Documentation',
+              to: '/docs/sdks',
             },
           ],
         },
@@ -129,17 +147,17 @@ const config: Config = {
           title: 'More',
           items: [
             {
-              label: 'GitHub',
-              href: 'https://github.com/cruso003/Youtube_demos/tree/main/universal-ai-platform',
+              label: 'BITS',
+              href: 'https://bits-innovate.com',
             },
             {
-              label: 'Demo Apps',
-              href: 'https://github.com/cruso003/Youtube_demos/tree/main/universal-ai-platform/demos',
+              label: 'Contact Support',
+              href: 'mailto:support@nexus.bits-innovate.com',
             },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Universal AI Platform. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} NexusAI Platform. Built with ❤️ for Africa by BITS (Building Innovative Technical Solutions).`,
     },
     prism: {
       theme: prismThemes.github,

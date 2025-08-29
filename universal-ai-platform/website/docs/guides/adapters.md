@@ -549,4 +549,4 @@ def test_healthcare_conversation(healthcare_client):
 
 ---
 
-**Next**: Learn about [Deployment](/docs/guides/deployment) or explore [Examples](/examples/language-learning) for complete implementations.
+**Next**: Learn about [Deployment](/docs/guides/deployment) or explore the [SDK Documentation](/docs/sdks) for implementation details.

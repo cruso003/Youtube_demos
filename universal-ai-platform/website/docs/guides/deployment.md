@@ -11,20 +11,21 @@ The easiest way to deploy the platform is using Docker containers.
 #### Single Container Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/cruso003/Youtube_demos.git
-cd Youtube_demos/universal-ai-platform
+# Download the NexusAI platform
+wget https://github.com/bits-innovate/nexusai-platform/releases/latest/download/nexusai-platform.tar.gz
+tar -xzf nexusai-platform.tar.gz
+cd nexusai-platform
 
 # Build the Docker image
-docker build -t universal-ai-platform .
+docker build -t nexusai-platform .
 
 # Run with environment variables
 docker run -d \
-  --name universal-ai \
+  --name nexusai \
   -p 8000:8000 \
   -e OPENAI_API_KEY=your_key \
   -e DEEPGRAM_API_KEY=your_key \
-  universal-ai-platform
+  nexusai-platform
 ```
 
 #### Docker Compose Setup
@@ -883,4 +884,4 @@ def rate_limit(limit=100, window=3600):
 
 ---
 
-**Next**: Explore [Examples](/examples/language-learning) for complete application implementations or learn about [Business Logic Adapters](/docs/guides/adapters).
+**Next**: Learn about [Business Logic Adapters](/docs/guides/adapters) or check out the [API Reference](/docs/api) for detailed endpoint documentation.
