@@ -79,22 +79,22 @@ def check_freemium_limits():
             now = datetime.now()
             today = now.strftime('%Y-%m-%d')
             
-            # Determine plan
+            # Determine access tier
             api_key = request.headers.get('Authorization')
-            plan = 'free' if not api_key else 'starter'  # Default to starter for API key users
+            access_tier = 'free' if not api_key else 'credit'  # Credit users have API keys
             
             # Check rate limiting
             time_since_last = time.time() - usage_data['last_request']
-            if plan == 'free' and time_since_last < FreemiumLimits.FREE_RATE_LIMIT:
+            if access_tier == 'free' and time_since_last < FreemiumLimits.FREE_RATE_LIMIT:
                 return jsonify({
                     'error': 'Rate limit exceeded',
                     'message': f'Free tier: Wait {FreemiumLimits.FREE_RATE_LIMIT} seconds between requests',
                     'retry_after': FreemiumLimits.FREE_RATE_LIMIT - time_since_last,
-                    'upgrade_info': 'Upgrade to Starter plan for faster access'
+                    'upgrade_info': 'Purchase credits for faster access and more features'
                 }), 429
             
             # Check daily message limits for free tier
-            if plan == 'free':
+            if access_tier == 'free':
                 daily_count = usage_data['daily_messages'].get(today, 0)
                 if daily_count >= FreemiumLimits.FREE_DAILY_MESSAGES:
                     return jsonify({
@@ -105,7 +105,7 @@ def check_freemium_limits():
                             'limit': FreemiumLimits.FREE_DAILY_MESSAGES,
                             'resets_at': 'midnight UTC'
                         },
-                        'upgrade_info': 'Upgrade to Starter plan for 1,000 messages/month'
+                        'upgrade_info': 'Purchase credits for unlimited messages'
                     }), 429
                 
                 # Check session limits for free tier
@@ -113,15 +113,15 @@ def check_freemium_limits():
                     return jsonify({
                         'error': 'Session limit exceeded',
                         'message': f'Free tier: Maximum {FreemiumLimits.FREE_MAX_SESSIONS} active session',
-                        'upgrade_info': 'Upgrade to Starter plan for unlimited sessions'
+                        'upgrade_info': 'Purchase credits for unlimited sessions'
                     }), 429
             
             # Update usage
             usage_data['last_request'] = time.time()
             
-            # Store plan info for endpoint use
+            # Store access tier info for endpoint use
             g.client_id = client_id
-            g.plan = plan
+            g.plan = access_tier
             g.usage_data = usage_data
             
             return f(*args, **kwargs)
@@ -140,7 +140,7 @@ def validate_free_tier_request(data):
             'error': 'Message too long',
             'message': f'Free tier: Maximum {FreemiumLimits.FREE_MAX_MESSAGE_LENGTH} characters per message',
             'current_length': len(message),
-            'upgrade_info': 'Upgrade to Starter plan for longer messages'
+            'upgrade_info': 'Purchase credits for longer messages'
         }
     
     # Check capabilities
@@ -150,7 +150,7 @@ def validate_free_tier_request(data):
             'error': 'Capabilities not allowed',
             'message': f'Free tier: Only {FreemiumLimits.FREE_ALLOWED_CAPABILITIES} capabilities allowed',
             'requested': capabilities,
-            'upgrade_info': 'Upgrade to Starter plan for voice and vision capabilities'
+            'upgrade_info': 'Purchase credits for voice and vision capabilities'
         }
     
     return True, None
@@ -177,9 +177,9 @@ def get_usage_info(client_id=None):
     usage_data = get_usage_data(client_id)
     today = datetime.now().strftime('%Y-%m-%d')
     
-    plan = 'free' if not request.headers.get('Authorization') else 'starter'
+    access_tier = 'free' if not request.headers.get('Authorization') else 'credit'
     
-    if plan == 'free':
+    if access_tier == 'free':
         return {
             'plan': 'free',
             'limits': {
@@ -194,15 +194,15 @@ def get_usage_info(client_id=None):
                 'active_sessions': len(usage_data['active_sessions'])
             },
             'upgrade_info': {
-                'starter_plan': '$9/month - 1,000 messages, all capabilities',
-                'business_plan': '$29/month - 10,000 messages, priority support'
+                'credit_system': 'Purchase credits starting at $5.00 for 5,000 credits',
+                'benefits': 'No daily limits, all capabilities, faster response times'
             }
         }
     else:
         return {
-            'plan': plan,
+            'plan': 'credit',
             'limits': {
-                'messages_per_month': FreemiumLimits.STARTER_MONTHLY_MESSAGES,
+                'credit_based': True,
                 'unlimited_sessions': True,
                 'all_capabilities': True
             },

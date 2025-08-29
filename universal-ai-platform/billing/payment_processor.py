@@ -1,15 +1,27 @@
 """
 NexusAI Payment Integration
 Handles subscription management and payment processing for African market
+Integrates with MTN Mobile Money and Dashboard
 """
 
 import os
 import json
 import logging
+import requests
+import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 from billing.usage_tracker import UsageTracker, BillingPlan
+from payment.mtn_payment import MTNMobileMoneyPayment, CreditManager
+
+# Import MTN payment handler
+try:
+    from payment.mtn_payment import MTNMobileMoneyPayment, PaymentRequest
+except ImportError:
+    print("Warning: MTN payment module not found")
+    MTNMobileMoneyPayment = None
+    PaymentRequest = None
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +39,7 @@ class PaymentProcessor:
     
     def __init__(self):
         self.usage_tracker = UsageTracker()
+        self.credit_manager = CreditManager()  # Add credit manager for storing/retrieving credits
         
         # African-focused payment methods
         self.payment_methods = {
@@ -195,3 +208,282 @@ class PaymentProcessor:
             return {"status": "subscription_activated"}
             
         return {"status": "payment_failed"}
+
+    # Credit Purchase Methods
+    def get_credit_packages(self) -> Dict:
+        """Get available credit packages (for reference) and credit conversion rate"""
+        return {
+            # Credit conversion rate: 1000 credits per $1
+            "credit_rate": 1000,  # credits per USD
+            "minimum_purchase": 5.00,  # minimum $5.00 for production
+            "currency": "USD",
+            
+            # Reference packages (optional, for UI convenience)
+            "suggested_packages": {
+                "starter": {
+                    "amount": 5.0,
+                    "credits": 5000,
+                    "description": "5,000 NexusAI Credits - Perfect for trying our service"
+                },
+                "standard": {
+                    "amount": 10.0,
+                    "credits": 10000,
+                    "description": "10,000 NexusAI Credits - Great for regular use"
+                },
+                "premium": {
+                    "amount": 50.0,
+                    "credits": 50000,
+                    "description": "50,000 NexusAI Credits - Best value for power users"
+                }
+            }
+        }
+    
+    def process_credit_purchase(self, amount: float, phone_number: str, user_id: str, country_code: str = "LR") -> Dict:
+        """Process credit purchase via MTN Mobile Money with custom amount"""
+        try:
+            # Convert amount to float if it's a string
+            amount = float(amount)
+            
+            credit_info = self.get_credit_packages()
+            
+            # Validate minimum amount
+            if amount < credit_info["minimum_purchase"]:
+                return {"success": False, "error": f"Minimum purchase is ${credit_info['minimum_purchase']}"}
+            
+            # Calculate credits based on amount
+            credits_to_add = int(amount * credit_info["credit_rate"])
+            
+            # Initialize MTN payment if available
+            if MTNMobileMoneyPayment:
+                try:
+                    mtn_payment = MTNMobileMoneyPayment(
+                        subscription_key=os.getenv('MTN_SUBSCRIPTION_KEY', 'b60e7311554c49948e4b4be2f0b268b3'),
+                        api_user=os.getenv('MTN_API_USER', 'd12bc032-0a43-4bfd-88c7-a4b0a4ea149d'),
+                        api_key=os.getenv('MTN_API_KEY', '6f1926714253462eb67a226162809a28'),
+                        environment="production",  # Use production for live payments
+                        target_environment="mtnliberia"
+                    )
+                    
+                    # Generate unique reference ID
+                    # Generate proper UUID for MTN payment reference
+                    reference_id = str(uuid.uuid4())
+                    
+                    # Process payment with custom amount
+                    result = mtn_payment.request_payment_custom(
+                        phone_number=phone_number,
+                        amount=amount,
+                        user_id=user_id,
+                        reference_id=reference_id,
+                        description=f"{credits_to_add} NexusAI Credits (${amount})"
+                    )
+                except Exception as e:
+                    print(f"MTN Payment initialization/processing error: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return {"success": False, "error": f"Payment processing error: {str(e)}"}
+                
+                if result.success and result.status == "pending":
+                    # Payment was initiated successfully, now we need to poll for completion
+                    logger.info(f"Payment initiated. Reference ID: {reference_id}. Polling for completion...")
+                    
+                    # Poll for payment completion
+                    import time
+                    max_wait_time = 60   # 1 minute for testing (should be longer in production)
+                    poll_interval = 5    # 5 seconds
+                    elapsed_time = 0
+                    
+                    while elapsed_time < max_wait_time:
+                        time.sleep(poll_interval)
+                        elapsed_time += poll_interval
+                        
+                        # Check payment status
+                        status_result = mtn_payment.check_payment_status(reference_id)
+                        logger.info(f"Payment status check: {status_result.status}")
+                        
+                        if status_result.status == "successful":
+                            # Payment completed successfully - add credits
+                            logger.info(f"Payment completed successfully! Adding {credits_to_add} credits to user {user_id}")
+                            
+                            # Add credits to user account
+                            credit_success = self.credit_manager.add_credits(
+                                user_id=user_id,
+                                credits=credits_to_add,
+                                transaction_id=result.transaction_id,
+                                amount_usd=amount,
+                                description=f"Credit purchase: {credits_to_add} credits for ${amount}"
+                            )
+                            
+                            if not credit_success:
+                                logger.error(f"Failed to add credits to user {user_id}")
+                                return {"success": False, "error": "Failed to allocate credits"}
+                            
+                            # Get updated user credit balance
+                            final_balance = self.credit_manager.get_user_credits(user_id)
+                            
+                            # Notify dashboard of successful payment
+                            dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:3000")
+                            webhook_data = {
+                                "transaction_id": result.transaction_id,
+                                "reference_id": reference_id,
+                                "status": "completed",
+                                "amount": amount,
+                                "currency": credit_info["currency"],
+                                "credits": credits_to_add,
+                                "user_id": user_id
+                            }
+                            
+                            try:
+                                requests.post(f"{dashboard_url}/api/billing/credits", json=webhook_data, timeout=10)
+                            except Exception as e:
+                                logger.warning(f"Failed to notify dashboard: {e}")
+                            
+                            return {
+                                "success": True,
+                                "transaction_id": result.transaction_id,
+                                "reference_id": reference_id,
+                                "status": "completed",
+                                "amount": amount,
+                                "credits": credits_to_add,
+                                "total_credits": final_balance,
+                                "message": f"Payment completed successfully! {credits_to_add} credits added. Total balance: {final_balance} credits."
+                            }
+                            
+                        elif status_result.status == "failed":
+                            # Payment failed
+                            logger.error(f"Payment failed for reference {reference_id}")
+                            return {
+                                "success": False,
+                                "error": "Payment was declined or failed"
+                            }
+                        
+                        # If status is still "pending", continue polling
+                        logger.info(f"Payment still pending. Elapsed time: {elapsed_time}s")
+                    
+                    # Timeout - payment took too long
+                    logger.warning(f"Payment timeout for reference {reference_id}")
+                    return {
+                        "success": False,
+                        "error": "Payment timeout. Please check your mobile device and try again."
+                    }
+                    
+                elif result.success:
+                    # Payment completed immediately (shouldn't happen with MTN, but just in case)
+                    logger.info(f"Payment completed immediately for reference {reference_id}")
+                    
+                    # Notify dashboard of successful payment
+                    dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:3000")
+                    webhook_data = {
+                        "transaction_id": result.transaction_id,
+                        "reference_id": reference_id,
+                        "status": "completed",
+                        "amount": amount,
+                        "currency": credit_info["currency"],
+                        "credits": credits_to_add,
+                        "user_id": user_id
+                    }
+                    
+                    try:
+                        requests.post(f"{dashboard_url}/api/billing/credits", json=webhook_data, timeout=10)
+                    except Exception as e:
+                        logger.warning(f"Failed to notify dashboard: {e}")
+                    
+                    return {
+                        "success": True,
+                        "transaction_id": result.transaction_id,
+                        "reference_id": reference_id,
+                        "status": "completed",
+                        "amount": amount,
+                        "credits": credits_to_add,
+                        "message": f"Payment completed! {credits_to_add} credits added."
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": result.message
+                    }
+            else:
+                return {
+                    "success": False,
+                    "error": "MTN Mobile Money not available"
+                }
+                
+        except Exception as e:
+            logger.error(f"Credit purchase error: {e}")
+            return {
+                "success": False,
+                "error": "Payment processing failed"
+            }
+    
+    def verify_api_key_credits(self, api_key: str, tokens_needed: int) -> Dict:
+        """Verify if API key has sufficient credits"""
+        try:
+            dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:3000")
+            response = requests.get(f"{dashboard_url}/api/usage?api_key={api_key}", timeout=5)
+            
+            if response.status_code == 200:
+                data = response.json()
+                current_credits = data.get("current_credits", 0)
+                credits_needed = max(1, tokens_needed // 1000)  # 1 credit per 1000 tokens
+                
+                return {
+                    "valid": current_credits >= credits_needed,
+                    "current_credits": current_credits,
+                    "credits_needed": credits_needed,
+                    "tokens_per_credit": 1000
+                }
+            else:
+                return {
+                    "valid": False,
+                    "error": "Could not verify credits"
+                }
+                
+        except Exception as e:
+            logger.error(f"Credit verification error: {e}")
+            return {
+                "valid": False,
+                "error": "Credit verification failed"
+            }
+    
+    def record_api_usage(self, api_key: str, endpoint: str, tokens_used: int, model: str = None) -> Dict:
+        """Record API usage and deduct credits"""
+        try:
+            dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:3000")
+            usage_data = {
+                "api_key": api_key,
+                "endpoint": endpoint,
+                "tokens_used": tokens_used,
+                "requests_count": 1,
+                "model": model or "default",
+                "cost": max(0.001, tokens_used * 0.000001)  # Minimum cost
+            }
+            
+            response = requests.post(f"{dashboard_url}/api/usage", json=usage_data, timeout=10)
+            
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 402:
+                return {
+                    "success": False,
+                    "error": "insufficient_credits",
+                    "message": "Insufficient credits to process request"
+                }
+            elif response.status_code == 401:
+                return {
+                    "success": False,
+                    "error": "invalid_api_key",
+                    "message": "Invalid or inactive API key"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "usage_tracking_failed",
+                    "message": "Failed to record usage"
+                }
+                
+        except Exception as e:
+            logger.error(f"Usage recording error: {e}")
+            return {
+                "success": False,
+                "error": "usage_tracking_failed",
+                "message": "Failed to record usage"
+            }

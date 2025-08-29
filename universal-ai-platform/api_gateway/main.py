@@ -9,10 +9,16 @@ import logging
 import os
 import uuid
 import sys
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 sys.path.append('..')
 from freemium_limits import check_freemium_limits, validate_free_tier_request, record_message_usage, record_session_creation, get_usage_info
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
+from functools import wraps
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -31,6 +37,60 @@ from openai import OpenAI
 # Configure logging first
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def check_api_key_and_credits(estimated_tokens=100):
+    """Decorator to check API key and credits before processing"""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            try:
+                # Get API key from Authorization header
+                auth_header = request.headers.get('Authorization', '')
+                if not auth_header.startswith('Bearer '):
+                    return jsonify({
+                        "status": "error",
+                        "message": "Missing or invalid API key"
+                    }), 401
+                
+                api_key = auth_header.replace('Bearer ', '')
+                
+                # Check credits via payment processor
+                from billing.payment_processor import PaymentProcessor
+                payment_processor = PaymentProcessor()
+                
+                credit_check = payment_processor.verify_api_key_credits(api_key, estimated_tokens)
+                
+                if not credit_check.get('valid', False):
+                    if credit_check.get('error') == 'Could not verify credits':
+                        return jsonify({
+                            "status": "error",
+                            "message": "Invalid API key",
+                            "error_code": "invalid_api_key"
+                        }), 401
+                    else:
+                        return jsonify({
+                            "status": "error",
+                            "message": "Insufficient credits",
+                            "error_code": "insufficient_credits",
+                            "current_credits": credit_check.get('current_credits', 0),
+                            "credits_needed": credit_check.get('credits_needed', 1)
+                        }), 402
+                
+                # Store API key and credit info in request context
+                request.api_key = api_key
+                request.credit_info = credit_check
+                
+                return f(*args, **kwargs)
+                
+            except Exception as e:
+                logger.error(f"Credit check error: {e}")
+                return jsonify({
+                    "status": "error",
+                    "message": "Service unavailable"
+                }), 503
+                
+        return decorated_function
+    return decorator
 
 import sys
 from pathlib import Path
@@ -205,7 +265,7 @@ def create_agent():
         }), 500
 
 @app.route("/api/v1/agent/<session_id>/message", methods=["POST"])
-@check_freemium_limits()
+@check_api_key_and_credits(estimated_tokens=150)  # Estimate tokens for credit check
 def send_message(session_id: str):
     """Send a message to an agent session"""
     try:
@@ -276,6 +336,20 @@ def send_message(session_id: str):
                             )
                             response_content = completion.choices[0].message.content
                             logger.info(f"OpenAI response generated: {len(response_content)} characters")
+                            
+                            # Record usage for credit billing
+                            if hasattr(request, 'api_key'):
+                                tokens_used = completion.usage.total_tokens if completion.usage else 150
+                                from billing.payment_processor import PaymentProcessor
+                                payment_processor = PaymentProcessor()
+                                usage_result = payment_processor.record_api_usage(
+                                    api_key=request.api_key,
+                                    endpoint="/api/v1/agent/message",
+                                    tokens_used=tokens_used,
+                                    model="gpt-4o-mini"
+                                )
+                                if not usage_result.get('success', True):
+                                    logger.warning(f"Failed to record usage: {usage_result}")
                             
                     except Exception as adapter_error:
                         logger.error(f"Adapter processing error: {adapter_error}")
@@ -548,146 +622,9 @@ def internal_error(error):
         "message": "Internal server error"
     }), 500
 
-# Payment Endpoints
-@app.route("/api/v1/payment/packages", methods=["GET"])
-def get_credit_packages():
-    """Get available credit packages"""
-    try:
-        if MTNMobileMoneyPayment is None:
-            return jsonify({
-                "status": "error",
-                "message": "Payment system not available"
-            }), 503
-        
-        mtn_payment = MTNMobileMoneyPayment()
-        packages = mtn_payment.get_credit_packages()
-        
-        return jsonify({
-            "status": "success",
-            "packages": packages,
-            "payment_methods": ["mtn_mobile_money", "bank_card"],
-            "supported_countries": ["Liberia"]
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting credit packages: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "Failed to get credit packages"
-        }), 500
-
-@app.route("/api/v1/payment/mtn/request", methods=["POST"])
-def request_mtn_payment():
-    """Request MTN Mobile Money payment for credits"""
-    try:
-        data = request.get_json()
-        
-        # Validate required fields
-        required_fields = ["phone_number", "package_type", "user_id"]
-        for field in required_fields:
-            if field not in data:
-                return jsonify({
-                    "status": "error",
-                    "message": f"Missing required field: {field}"
-                }), 400
-        
-        if MTNMobileMoneyPayment is None:
-            return jsonify({
-                "status": "error",
-                "message": "MTN Mobile Money not available"
-            }), 503
-        
-        # Initialize MTN payment processor
-        mtn_payment = MTNMobileMoneyPayment(
-            environment=os.getenv("MTN_ENVIRONMENT", "sandbox"),
-            target_environment="mtnliberia"
-        )
-        
-        # Request payment
-        payment_result = mtn_payment.request_payment(
-            phone_number=data["phone_number"],
-            package_type=data["package_type"],
-            user_id=data["user_id"]
-        )
-        
-        if payment_result.success:
-            return jsonify({
-                "status": "success",
-                "transaction_id": payment_result.transaction_id,
-                "reference_id": payment_result.reference_id,
-                "message": payment_result.message,
-                "payment_status": payment_result.status
-            })
-        else:
-            return jsonify({
-                "status": "error",
-                "message": payment_result.message
-            }), 400
-            
-    except Exception as e:
-        logger.error(f"Error requesting MTN payment: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "Failed to process payment request"
-        }), 500
-
-@app.route("/api/v1/payment/status/<reference_id>", methods=["GET"])
-def check_payment_status(reference_id: str):
-    """Check payment status and add credits if successful"""
-    try:
-        if MTNMobileMoneyPayment is None:
-            return jsonify({
-                "status": "error",
-                "message": "Payment system not available"
-            }), 503
-        
-        # Initialize payment processor
-        mtn_payment = MTNMobileMoneyPayment(
-            environment=os.getenv("MTN_ENVIRONMENT", "sandbox"),
-            target_environment="mtnliberia"
-        )
-        
-        # Check payment status
-        status_result = mtn_payment.check_payment_status(reference_id)
-        
-        response_data = {
-            "status": "success",
-            "transaction_id": status_result.transaction_id,
-            "payment_status": status_result.status,
-            "message": status_result.message
-        }
-        
-        # If payment is successful, add credits to user account
-        if status_result.success and status_result.status == "successful":
-            # Extract user_id from reference_id (format: nexusai_userid_randomhex)
-            try:
-                user_id = reference_id.split("_")[1]
-                
-                # Get package info from reference
-                # TODO: Store package info with transaction for proper credit calculation
-                # For now, assume starter package (1000 credits)
-                credits_to_add = 1000
-                
-                if CreditManager:
-                    credit_manager = CreditManager()
-                    if credit_manager.add_credits(user_id, credits_to_add, reference_id):
-                        response_data["credits_added"] = credits_to_add
-                        response_data["message"] = f"Payment successful! {credits_to_add} credits added to your account."
-                    else:
-                        response_data["warning"] = "Payment successful but failed to add credits. Please contact support."
-                        
-            except Exception as e:
-                logger.error(f"Error adding credits after successful payment: {e}")
-                response_data["warning"] = "Payment successful but failed to add credits. Please contact support."
-        
-        return jsonify(response_data)
-        
-    except Exception as e:
-        logger.error(f"Error checking payment status: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "Failed to check payment status"
-        }), 500
+# The payment endpoints have been moved to payment_endpoints.py
+# Use /api/v1/credits/purchase for credit purchases
+# Use /api/v1/credits/packages for package information
 
 @app.route("/api/v1/user/<user_id>/credits", methods=["GET"])
 def get_user_credits(user_id: str):

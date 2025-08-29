@@ -1,140 +1,239 @@
 "use client"
 
 import { useState } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useRouter } from "next/navigation"
+import { signIn } from "next-auth/react"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
-import { Zap, Mail, Lock, User, Github, Gift } from "lucide-react"
-import Link from "next/link"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Icons } from "@/components/icons"
+import { toast } from "sonner"
 
-export default function SignupPage() {
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    password: "",
-    confirmPassword: ""
-  })
+export default function SignUpPage() {
+  const [isLoading, setIsLoading] = useState(false)
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false)
+  const [isGithubLoading, setIsGithubLoading] = useState(false)
+  const router = useRouter()
+
+  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setIsLoading(true)
+
+    const formData = new FormData(event.currentTarget)
+    const email = formData.get("email") as string
+    const password = formData.get("password") as string
+    const confirmPassword = formData.get("confirmPassword") as string
+    const name = formData.get("name") as string
+
+    if (password !== confirmPassword) {
+      toast.error("Passwords do not match")
+      setIsLoading(false)
+      return
+    }
+
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          name,
+        }),
+      })
+
+      if (response.ok) {
+        toast.success("Account created successfully!")
+        // Automatically sign in the user
+        const result = await signIn("credentials", {
+          email,
+          password,
+          redirect: false,
+        })
+
+        if (result?.ok) {
+          router.push("/dashboard")
+        } else {
+          router.push("/login")
+        }
+      } else {
+        const error = await response.json()
+        toast.error(error.message || "Something went wrong")
+      }
+    } catch (error) {
+      toast.error("Something went wrong. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  async function handleOAuthSignIn(provider: "google" | "github") {
+    if (provider === "google") {
+      setIsGoogleLoading(true)
+    } else {
+      setIsGithubLoading(true)
+    }
+
+    try {
+      await signIn(provider, { callbackUrl: "/dashboard" })
+    } catch (error) {
+      toast.error("Something went wrong. Please try again.")
+    } finally {
+      if (provider === "google") {
+        setIsGoogleLoading(false)
+      } else {
+        setIsGithubLoading(false)
+      }
+    }
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center space-x-2 mb-4">
-            <div className="w-10 h-10 bg-gradient-to-r from-purple-400 to-pink-400 rounded-lg flex items-center justify-center">
-              <Zap className="w-6 h-6 text-white" />
-            </div>
-            <span className="text-2xl font-bold text-white">NexusAI</span>
-          </div>
-          <h1 className="text-2xl font-bold text-white mb-2">Join NexusAI</h1>
-          <p className="text-slate-300">Create your developer account</p>
-          
-          <Badge className="mt-4 bg-green-500/20 text-green-300 border-green-500/30">
-            <Gift className="w-3 h-3 mr-1" />
-            100 Free Credits to Start
-          </Badge>
+    <div className="container relative min-h-screen flex-col items-center justify-center grid lg:max-w-none lg:grid-cols-2 lg:px-0">
+      <div className="relative hidden h-full flex-col bg-muted p-10 text-white dark:border-r lg:flex">
+        <div className="absolute inset-0 bg-zinc-900" />
+        <div className="relative z-20 flex items-center text-lg font-medium">
+          <Icons.logo className="mr-2 h-6 w-6" />
+          NexusAI
         </div>
-
-        <Card className="bg-slate-800/50 border-slate-700">
-          <CardHeader className="space-y-1">
-            <CardTitle className="text-white">Create Account</CardTitle>
-            <CardDescription className="text-slate-300">
-              Start building with AI in minutes
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="name" className="text-white">Full Name</Label>
+        <div className="relative z-20 mt-auto">
+          <blockquote className="space-y-2">
+            <p className="text-lg">
+              "NexusAI has revolutionized how we handle AI workflows. The universal platform approach is brilliant."
+            </p>
+            <footer className="text-sm">Sofia Davis, CTO at TechCorp</footer>
+          </blockquote>
+        </div>
+      </div>
+      <div className="lg:p-8">
+        <div className="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[350px]">
+          <Card>
+            <CardHeader className="space-y-1">
+              <CardTitle className="text-2xl text-center">Create an account</CardTitle>
+              <CardDescription className="text-center">
+                Enter your details below to create your account
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-6">
+                <Button
+                  variant="outline"
+                  onClick={() => handleOAuthSignIn("github")}
+                  disabled={isLoading || isGithubLoading}
+                >
+                  {isGithubLoading ? (
+                    <Icons.spinner className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Icons.gitHub className="mr-2 h-4 w-4" />
+                  )}
+                  Github
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleOAuthSignIn("google")}
+                  disabled={isLoading || isGoogleLoading}
+                >
+                  {isGoogleLoading ? (
+                    <Icons.spinner className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Icons.google className="mr-2 h-4 w-4" />
+                  )}
+                  Google
+                </Button>
+              </div>
               <div className="relative">
-                <User className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder="John Doe"
-                  value={formData.name}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  className="pl-10 bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-400"
-                />
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-background px-2 text-muted-foreground">
+                    Or continue with
+                  </span>
+                </div>
               </div>
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-white">Email</Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="developer@company.com"
-                  value={formData.email}
-                  onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  className="pl-10 bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-400"
-                />
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-white">Password</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  id="password"
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({...formData, password: e.target.value})}
-                  className="pl-10 bg-slate-700/50 border-slate-600 text-white"
-                />
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword" className="text-white">Confirm Password</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  value={formData.confirmPassword}
-                  onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
-                  className="pl-10 bg-slate-700/50 border-slate-600 text-white"
-                />
-              </div>
-            </div>
-            
-            <Button className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600">
-              Create Account
-            </Button>
-            
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-slate-600" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-slate-800 px-2 text-slate-400">Or continue with</span>
-              </div>
-            </div>
-            
-            <Button variant="outline" className="w-full border-slate-300 text-slate-100 bg-slate-800/30 hover:bg-slate-700 hover:text-white hover:border-slate-200">
-              <Github className="mr-2 h-4 w-4" />
-              GitHub
-            </Button>
-            
-            <div className="text-center text-sm">
-              <span className="text-slate-400">Already have an account? </span>
-              <Link href="/login" className="text-purple-400 hover:text-purple-300">
-                Sign in
-              </Link>
-            </div>
-            
-            <div className="text-xs text-slate-400 text-center">
-              By creating an account, you agree to our{" "}
-              <Link href="/terms" className="text-purple-400 hover:text-purple-300">Terms</Link>
-              {" "}and{" "}
-              <Link href="/privacy" className="text-purple-400 hover:text-purple-300">Privacy Policy</Link>
-            </div>
-          </CardContent>
-        </Card>
+              <form onSubmit={onSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="name">Full Name</Label>
+                  <Input
+                    id="name"
+                    name="name"
+                    placeholder="Enter your full name"
+                    type="text"
+                    autoCapitalize="words"
+                    autoComplete="name"
+                    autoCorrect="off"
+                    disabled={isLoading}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    name="email"
+                    placeholder="Enter your email"
+                    type="email"
+                    autoCapitalize="none"
+                    autoComplete="email"
+                    autoCorrect="off"
+                    disabled={isLoading}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    name="password"
+                    placeholder="Enter your password"
+                    type="password"
+                    autoComplete="new-password"
+                    disabled={isLoading}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword">Confirm Password</Label>
+                  <Input
+                    id="confirmPassword"
+                    name="confirmPassword"
+                    placeholder="Confirm your password"
+                    type="password"
+                    autoComplete="new-password"
+                    disabled={isLoading}
+                    required
+                  />
+                </div>
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                  {isLoading && (
+                    <Icons.spinner className="mr-2 h-4 w-4 animate-spin" />
+                  )}
+                  Create Account
+                </Button>
+              </form>
+              <p className="px-8 text-center text-sm text-muted-foreground">
+                By clicking continue, you agree to our{" "}
+                <Link href="/terms" className="underline underline-offset-4 hover:text-primary">
+                  Terms of Service
+                </Link>{" "}
+                and{" "}
+                <Link href="/privacy" className="underline underline-offset-4 hover:text-primary">
+                  Privacy Policy
+                </Link>
+                .
+              </p>
+              <p className="text-center text-sm">
+                Already have an account?{" "}
+                <Link href="/login" className="underline underline-offset-4 hover:text-primary">
+                  Sign in
+                </Link>
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   )

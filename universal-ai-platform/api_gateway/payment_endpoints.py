@@ -1,6 +1,6 @@
 """
 Payment API Endpoints
-Handles subscription management and payment processing
+Handles subscription management, payment processing, and credit purchases
 """
 
 from flask import Blueprint, request, jsonify
@@ -13,10 +13,23 @@ payment_processor = PaymentProcessor()
 
 @payment_bp.route("/api/v1/pricing/<country_code>", methods=["GET"])
 def get_pricing(country_code: str):
-    """Get pricing for a specific country"""
+    """Get credit pricing for a specific country"""
     try:
-        plan_id = request.args.get('plan', 'starter')
-        pricing = payment_processor.calculate_pricing_for_country(plan_id, country_code.upper())
+        # Return credit pricing information
+        base_rate = 1000  # credits per USD
+        minimum_purchase = 5.00  # minimum $5.00
+        
+        pricing = {
+            "country_code": country_code.upper(),
+            "currency": "USD",
+            "credit_rate": base_rate,
+            "minimum_purchase": minimum_purchase,
+            "suggested_amounts": {
+                "starter": {"amount": 5.0, "credits": 5000},
+                "standard": {"amount": 10.0, "credits": 10000},
+                "premium": {"amount": 50.0, "credits": 50000}
+            }
+        }
         
         return jsonify({
             "status": "success",
@@ -28,6 +41,71 @@ def get_pricing(country_code: str):
         return jsonify({
             "status": "error", 
             "message": str(e)
+        }), 500
+
+@payment_bp.route("/api/v1/credits/packages", methods=["GET"])
+def get_credit_packages():
+    """Get available credit packages"""
+    try:
+        packages = payment_processor.get_credit_packages()
+        return jsonify({
+            "status": "success",
+            "packages": packages
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting credit packages: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@payment_bp.route("/api/v1/credits/purchase", methods=["POST"])
+def purchase_credits():
+    """Purchase credits via mobile money with custom amount"""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['amount', 'phone_number', 'user_id']
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({
+                    "status": "error",
+                    "message": f"Missing required field: {field}"
+                }), 400
+        
+        # Validate amount
+        amount = float(data['amount'])
+        if amount < 5.00:
+            return jsonify({
+                "status": "error",
+                "message": "Minimum purchase amount is $5.00"
+            }), 400
+        
+        result = payment_processor.process_credit_purchase(
+            amount=amount,
+            phone_number=data['phone_number'],
+            user_id=data['user_id'],
+            country_code=data.get('country_code', 'LR')
+        )
+        
+        if result['success']:
+            return jsonify({
+                "status": "success",
+                **result
+            }), 200
+        else:
+            return jsonify({
+                "status": "error",
+                "message": result.get('error', 'Payment failed')
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"Error processing credit purchase: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Internal server error"
         }), 500
 
 @payment_bp.route("/api/v1/payment-methods/<country_code>", methods=["GET"])
@@ -57,139 +135,6 @@ def get_payment_methods(country_code: str):
             "message": str(e)
         }), 500
 
-@payment_bp.route("/api/v1/subscription/create", methods=["POST"])
-def create_subscription():
-    """Create a new subscription"""
-    try:
-        data = request.get_json()
-        
-        required_fields = ["client_id", "plan_id", "payment_method", "country_code"]
-        for field in required_fields:
-            if field not in data:
-                return jsonify({
-                    "status": "error",
-                    "message": f"Missing required field: {field}"
-                }), 400
-        
-        subscription = payment_processor.create_subscription(
-            client_id=data["client_id"],
-            plan_id=data["plan_id"],
-            payment_method_id=data["payment_method"],
-            country_code=data["country_code"],
-            billing_cycle=data.get("billing_cycle", "monthly")
-        )
-        
-        return jsonify({
-            "status": "success",
-            "subscription": subscription,
-            "message": "Subscription created. Complete payment to activate."
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error creating subscription: {e}")
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
-
-@payment_bp.route("/api/v1/webhook/<provider>", methods=["POST"])
-def payment_webhook(provider: str):
-    """Handle payment webhooks from providers"""
-    try:
-        webhook_data = request.get_json()
-        result = payment_processor.handle_webhook(provider, webhook_data)
-        
-        return jsonify({
-            "status": "success",
-            "result": result
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error handling webhook: {e}")
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
-
-@payment_bp.route("/api/v1/plans", methods=["GET"])
-def get_plans():
-    """Get all available billing plans"""
-    try:
-        plans = [
-            {
-                "plan_id": "free",
-                "name": "Free Tier",
-                "price": 0,
-                "features": [
-                    "5 messages/day",
-                    "1 session per IP", 
-                    "Text only",
-                    "Community support"
-                ],
-                "limits": {
-                    "daily_messages": 5,
-                    "rate_limit": "1/minute",
-                    "capabilities": ["text"]
-                }
-            },
-            {
-                "plan_id": "starter", 
-                "name": "Starter Plan",
-                "price": 9,
-                "features": [
-                    "1,000 messages/month",
-                    "All capabilities",
-                    "Email support",
-                    "API analytics"
-                ],
-                "limits": {
-                    "monthly_messages": 1000,
-                    "rate_limit": "60/minute",
-                    "capabilities": ["text", "voice", "vision"]
-                }
-            },
-            {
-                "plan_id": "professional",
-                "name": "Professional Plan", 
-                "price": 29,
-                "features": [
-                    "10,000 messages/month",
-                    "Priority support",
-                    "Custom business adapters",
-                    "Advanced analytics"
-                ],
-                "limits": {
-                    "monthly_messages": 10000,
-                    "rate_limit": "120/minute",
-                    "capabilities": ["text", "voice", "vision"]
-                }
-            },
-            {
-                "plan_id": "enterprise",
-                "name": "Enterprise Plan",
-                "price": 99, 
-                "features": [
-                    "Unlimited messages",
-                    "24/7 phone support",
-                    "White-label option",
-                    "Custom integrations"
-                ],
-                "limits": {
-                    "monthly_messages": "unlimited",
-                    "rate_limit": "unlimited",
-                    "capabilities": ["text", "voice", "vision"]
-                }
-            }
-        ]
-        
-        return jsonify({
-            "status": "success",
-            "plans": plans
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error getting plans: {e}")
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
+# Legacy endpoints removed - now using credit system
+# Use /api/v1/credits/purchase for purchasing credits
+# Use /api/v1/credits/packages for available credit packages
