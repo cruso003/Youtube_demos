@@ -254,6 +254,7 @@ class MTNMobileMoneyPayment:
             amount = float(amount)
             
             # Validate minimum amount
+            print(f"[DEBUG] request_payment_custom: amount={amount}, minimum=5.00")
             if amount < 5.00:
                 return PaymentResponse(
                     success=False,

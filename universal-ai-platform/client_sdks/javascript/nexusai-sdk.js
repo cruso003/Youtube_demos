@@ -160,29 +160,6 @@ class NexusAIClient {
         return await this.request(url);
     }
 
-    /**
-     * Get billing information
-     * @param {string} clientId - Client identifier
-     * @param {string} planId - Billing plan ID
-     * @param {Date} startDate - Start date for billing period
-     * @param {Date} endDate - End date for billing period
-     * @returns {Promise<object>} Billing information
-     */
-    async getBillingInfo(clientId, planId = 'starter', startDate = null, endDate = null) {
-        let url = `/api/v1/billing/${clientId}`;
-        const params = new URLSearchParams();
-        params.append('plan_id', planId);
-
-        if (startDate) {
-            params.append('start_date', startDate.toISOString());
-        }
-        if (endDate) {
-            params.append('end_date', endDate.toISOString());
-        }
-
-        url += `?${params.toString()}`;
-        return await this.request(url);
-    }
 
     /**
      * List all active agent sessions
@@ -378,47 +355,4 @@ class AgentSession {
             });
         }
     }
-}
-
-/**
- * Convenience function for simple use cases
- * @param {string} apiUrl - API URL
- * @param {string} instructions - Instructions for the agent
- * @param {array} capabilities - List of capabilities (defaults to ['text'])
- * @returns {Promise<object>} Object with client, agent, and session
- */
-async function createSimpleAgent(apiUrl = 'https://nexus.bits-innovate.com', instructions, capabilities = ['text']) {
-    const client = new NexusAIClient(apiUrl);
-    const config = {
-        instructions: instructions,
-        capabilities: capabilities
-    };
-    
-    const result = await client.createAgent(config);
-    const sessionId = result.session_id;
-    const session = new AgentSession(client, sessionId);
-    
-    return {
-        client: client,
-        agent: { id: result.agent_id || sessionId },
-        session: session
-    };
-}
-
-// Export for Node.js
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-        NexusAIClient,
-        AgentSession,
-        createSimpleAgent
-    };
-}
-
-// Export for browsers
-if (typeof window !== 'undefined') {
-    window.NexusAI = {
-        NexusAIClient,
-        AgentSession,
-        createSimpleAgent
-    };
 }

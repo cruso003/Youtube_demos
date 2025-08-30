@@ -253,23 +253,21 @@ class NexusAIClient:
             logger.error(f"Failed to get usage summary: {e}")
             raise Exception(f"Failed to get usage summary: {e}")
     
-    def get_billing_info(self, client_id: str, plan_id: str = "starter",
+    def get_billing_info(self, client_id: str,
                         start_date: Optional[datetime] = None, 
                         end_date: Optional[datetime] = None) -> Dict[str, Any]:
         """
-        Get billing information
+        Get credit-based billing information
         
         Args:
             client_id: Client identifier
-            plan_id: Billing plan ID
             start_date: Start date for billing period
             end_date: End date for billing period
-            
         Returns:
-            Billing information
+            Billing information (credit usage)
         """
         try:
-            params = {"plan_id": plan_id}
+            params = {}
             if start_date:
                 params["start_date"] = start_date.isoformat()
             if end_date:
@@ -280,9 +278,7 @@ class NexusAIClient:
                 params=params
             )
             response.raise_for_status()
-            
             return response.json()
-            
         except requests.RequestException as e:
             logger.error(f"Failed to get billing info: {e}")
             raise Exception(f"Failed to get billing info: {e}")

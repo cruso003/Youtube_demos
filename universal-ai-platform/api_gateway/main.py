@@ -9,16 +9,22 @@ import logging
 import os
 import uuid
 import sys
+from functools import wraps
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
 
 sys.path.append('..')
-from freemium_limits import check_freemium_limits, validate_free_tier_request, record_message_usage, record_session_creation, get_usage_info
+from api_gateway.freemium_limits import check_freemium_limits, validate_free_tier_request, record_message_usage, record_session_creation, get_usage_info
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
-from functools import wraps
+import sys
+from pathlib import Path
+# Ensure project root is in sys.path for Docker and local
+project_root = str(Path(__file__).resolve().parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -39,55 +45,67 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def check_api_key_and_credits(estimated_tokens=100):
-    """Decorator to check API key and credits before processing"""
+    """Decorator to check API key and credits - ONLY for service endpoints"""
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             try:
-                # Get API key from Authorization header
+                # Only accept API keys for service endpoints
                 auth_header = request.headers.get('Authorization', '')
                 if not auth_header.startswith('Bearer '):
                     return jsonify({
                         "status": "error",
-                        "message": "Missing or invalid API key"
+                        "message": "Missing API key"
                     }), 401
                 
                 api_key = auth_header.replace('Bearer ', '')
                 
+                # Ensure it's actually an API key, not a JWT token
+                if not api_key.startswith('nexus_'):
+                    return jsonify({
+                        "status": "error",
+                        "message": "Invalid API key format. Use API key, not JWT token."
+                    }), 401
+                
                 # Check credits via payment processor
-                from billing.payment_processor import PaymentProcessor
-                payment_processor = PaymentProcessor()
-                
-                credit_check = payment_processor.verify_api_key_credits(api_key, estimated_tokens)
-                
-                if not credit_check.get('valid', False):
-                    if credit_check.get('error') == 'Could not verify credits':
-                        return jsonify({
-                            "status": "error",
-                            "message": "Invalid API key",
-                            "error_code": "invalid_api_key"
-                        }), 401
-                    else:
-                        return jsonify({
-                            "status": "error",
-                            "message": "Insufficient credits",
-                            "error_code": "insufficient_credits",
-                            "current_credits": credit_check.get('current_credits', 0),
-                            "credits_needed": credit_check.get('credits_needed', 1)
-                        }), 402
-                
-                # Store API key and credit info in request context
-                request.api_key = api_key
-                request.credit_info = credit_check
+                try:
+                    from billing.payment_processor import PaymentProcessor
+                    payment_processor = PaymentProcessor()
+                    credit_check = payment_processor.verify_api_key_credits(api_key, estimated_tokens)
+                    
+                    if not credit_check.get('valid', False):
+                        if credit_check.get('error') == 'Could not verify credits':
+                            return jsonify({
+                                "status": "error",
+                                "message": "Invalid API key",
+                                "error_code": "invalid_api_key"
+                            }), 401
+                        else:
+                            return jsonify({
+                                "status": "error",
+                                "message": "Insufficient credits",
+                                "error_code": "insufficient_credits",
+                                "current_credits": credit_check.get('current_credits', 0),
+                                "credits_needed": credit_check.get('credits_needed', 1)
+                            }), 402
+                    
+                    request.api_key = api_key
+                    request.credit_info = credit_check
+                    
+                except ImportError:
+                    return jsonify({
+                        "status": "error",
+                        "message": "Payment processor not available"
+                    }), 503
                 
                 return f(*args, **kwargs)
                 
             except Exception as e:
-                logger.error(f"Credit check error: {e}")
+                logger.error(f"API key verification error: {e}")
                 return jsonify({
                     "status": "error",
-                    "message": "Service unavailable"
-                }), 503
+                    "message": "Authentication failed"
+                }), 401
                 
         return decorated_function
     return decorator
@@ -129,11 +147,15 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
-# Register multimodal endpoint blueprints
+# Import and register auth endpoints
+from api_gateway.auth_endpoints import auth_bp
+
+# Register multimodal and auth endpoint blueprints
 app.register_blueprint(voice_bp)
 app.register_blueprint(vision_bp)
 app.register_blueprint(realtime_bp)
 app.register_blueprint(payment_bp)
+app.register_blueprint(auth_bp)
 
 # Import shared state
 from api_gateway.shared_state import active_sessions, message_queues
@@ -216,30 +238,12 @@ def check_usage_limits():
             "message": "Failed to check usage limits"
         }), 500
 
+# SERVICE ENDPOINTS (Require API Key)
 @app.route("/api/v1/agent/create", methods=["POST"])
-@check_freemium_limits()
+@check_api_key_and_credits(estimated_tokens=50)
 def create_agent():
-    """Create a new AI agent session with freemium rate limiting"""
+    """Create a new AI agent session - SERVICE ENDPOINT"""
     try:
-        # Get client IP and API key
-        client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.environ.get('REMOTE_ADDR', 'unknown'))
-        api_key = request.headers.get('Authorization', '').replace('Bearer ', '') or None
-        
-        # Check freemium limits
-        allowed, limit_info = rate_limiter.is_allowed(client_ip, api_key)
-        
-        if not allowed:
-            return jsonify({
-                "status": "error",
-                "message": limit_info.get("error", "Rate limit exceeded"),
-                "limit_info": limit_info,
-                "upgrade_info": {
-                    "message": "Upgrade to Business tier for unlimited access",
-                    "pricing": "$29/month - Perfect for African businesses",
-                    "features": ["Unlimited messages", "Priority support", "Custom adapters"]
-                } if limit_info.get("tier") == "free" else None
-            }), 429
-        
         config_data = request.get_json()
         
         # Validate required fields
@@ -265,9 +269,9 @@ def create_agent():
         }), 500
 
 @app.route("/api/v1/agent/<session_id>/message", methods=["POST"])
-@check_api_key_and_credits(estimated_tokens=150)  # Estimate tokens for credit check
+@check_api_key_and_credits(estimated_tokens=150)
 def send_message(session_id: str):
-    """Send a message to an agent session"""
+    """Send a message to an agent session - SERVICE ENDPOINT"""
     try:
         if session_id not in active_sessions:
             return jsonify({
@@ -340,16 +344,19 @@ def send_message(session_id: str):
                             # Record usage for credit billing
                             if hasattr(request, 'api_key'):
                                 tokens_used = completion.usage.total_tokens if completion.usage else 150
-                                from billing.payment_processor import PaymentProcessor
-                                payment_processor = PaymentProcessor()
-                                usage_result = payment_processor.record_api_usage(
-                                    api_key=request.api_key,
-                                    endpoint="/api/v1/agent/message",
-                                    tokens_used=tokens_used,
-                                    model="gpt-4o-mini"
-                                )
-                                if not usage_result.get('success', True):
-                                    logger.warning(f"Failed to record usage: {usage_result}")
+                                try:
+                                    from billing.payment_processor import PaymentProcessor
+                                    payment_processor = PaymentProcessor()
+                                    usage_result = payment_processor.record_api_usage(
+                                        api_key=request.api_key,
+                                        endpoint="/api/v1/agent/message",
+                                        tokens_used=tokens_used,
+                                        model="gpt-4o-mini"
+                                    )
+                                    if not usage_result.get('success', True):
+                                        logger.warning(f"Failed to record usage: {usage_result}")
+                                except ImportError:
+                                    logger.warning("Payment processor not available for usage tracking")
                             
                     except Exception as adapter_error:
                         logger.error(f"Adapter processing error: {adapter_error}")
@@ -398,8 +405,9 @@ def send_message(session_id: str):
         }), 500
 
 @app.route("/api/v1/agent/<session_id>/messages", methods=["GET"])
+@check_api_key_and_credits(estimated_tokens=10)
 def get_messages(session_id: str):
-    """Get messages from an agent session"""
+    """Get messages from an agent session - SERVICE ENDPOINT"""
     try:
         if session_id not in active_sessions:
             return jsonify({
@@ -432,8 +440,9 @@ def get_messages(session_id: str):
         }), 500
 
 @app.route("/api/v1/agent/<session_id>/status", methods=["GET"])
+@check_api_key_and_credits(estimated_tokens=5)
 def get_session_status(session_id: str):
-    """Get status of an agent session"""
+    """Get status of an agent session - SERVICE ENDPOINT"""
     try:
         if session_id not in active_sessions:
             return jsonify({
@@ -460,8 +469,9 @@ def get_session_status(session_id: str):
         }), 500
 
 @app.route("/api/v1/agent/<session_id>", methods=["DELETE"])
+@check_api_key_and_credits(estimated_tokens=5)
 def delete_session(session_id: str):
-    """Delete an agent session"""
+    """Delete an agent session - SERVICE ENDPOINT"""
     try:
         if session_id not in active_sessions:
             return jsonify({
@@ -490,9 +500,10 @@ def delete_session(session_id: str):
             "message": "Internal server error"
         }), 500
 
+# PUBLIC ENDPOINTS (No authentication required)
 @app.route("/api/v1/usage/<client_id>", methods=["GET"])
 def get_usage_summary(client_id: str):
-    """Get usage summary for billing"""
+    """Get usage summary for billing - PUBLIC ENDPOINT"""
     try:
         # Parse date parameters
         start_date_str = request.args.get("start_date")
@@ -527,29 +538,47 @@ def get_usage_summary(client_id: str):
 
 @app.route("/api/v1/billing/<client_id>", methods=["GET"])
 def get_billing_info(client_id: str):
-    """Get billing information for a client"""
+    """Get billing information for a client - PUBLIC ENDPOINT"""
     try:
         # Parse parameters
-        plan_id = request.args.get("plan_id", "starter")
         start_date_str = request.args.get("start_date")
         end_date_str = request.args.get("end_date")
-        
+
         start_date = datetime.fromisoformat(start_date_str) if start_date_str else datetime.now() - timedelta(days=30)
         end_date = datetime.fromisoformat(end_date_str) if end_date_str else datetime.now()
-        
-        # Calculate bill
-        bill = asyncio.run(usage_tracker.calculate_bill(
-            client_id=client_id,
-            plan_id=plan_id,
+
+        # Get usage summary (credit-based)
+        usage_summary = asyncio.run(usage_tracker.get_usage_summary(
+            agent_id=client_id,
             start_date=start_date,
             end_date=end_date
         ))
-        
+
+        # Calculate credit usage (assume 1 message = 1 credit, 1 image = 5 credits, 1 minute voice = 2 credits)
+        credits_used = usage_summary.get("messages", 0) * 1 \
+            + usage_summary.get("images", 0) * 5 \
+            + usage_summary.get("total_duration_minutes", 0) * 2
+
+        bill = {
+            "client_id": client_id,
+            "billing_period": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat()
+            },
+            "usage": usage_summary,
+            "credits_used": credits_used,
+            "credit_rate": {
+                "message": 1,
+                "image": 5,
+                "minute": 2
+            }
+        }
+
         return jsonify({
             "status": "success",
             "billing_info": bill
         })
-        
+
     except Exception as e:
         logger.error(f"Error in get_billing_info: {e}")
         return jsonify({
@@ -559,7 +588,7 @@ def get_billing_info(client_id: str):
 
 @app.route("/api/v1/agents", methods=["GET"])
 def list_active_sessions():
-    """List all active agent sessions"""
+    """List all active agent sessions - PUBLIC ENDPOINT"""
     try:
         sessions = []
         for session_id, session_info in active_sessions.items():
@@ -587,7 +616,7 @@ def list_active_sessions():
 
 @app.route('/ready', methods=['GET'])
 def readiness_check():
-    """Readiness check for Kubernetes"""
+    """Readiness check for Kubernetes - PUBLIC ENDPOINT"""
     try:
         # More thorough checks for readiness
         openai_key = os.getenv('OPENAI_API_KEY')
@@ -622,13 +651,10 @@ def internal_error(error):
         "message": "Internal server error"
     }), 500
 
-# The payment endpoints have been moved to payment_endpoints.py
-# Use /api/v1/credits/purchase for credit purchases
-# Use /api/v1/credits/packages for package information
-
+# CREDIT MANAGEMENT ENDPOINTS (Public for now, could be restricted later)
 @app.route("/api/v1/user/<user_id>/credits", methods=["GET"])
 def get_user_credits(user_id: str):
-    """Get user's current credit balance"""
+    """Get user's current credit balance - PUBLIC ENDPOINT"""
     try:
         if CreditManager is None:
             return jsonify({

@@ -34,3 +34,15 @@ twilio>=8.5.0
 # Documentation
 mkdocs>=1.5.0
 mkdocs-material>=9.0.0
+
+# Database migrations
+alembic>=1.13.0
+
+# PostgreSQL adapter
+psycopg2-binary>=2.9.0
+
+# Password hashing
+bcrypt>=4.0.0
+
+# JWT tokens
+PyJWT>=2.8.0

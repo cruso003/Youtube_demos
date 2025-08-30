@@ -239,36 +239,54 @@ class PaymentProcessor:
         }
     
     def process_credit_purchase(self, amount: float, phone_number: str, user_id: str, country_code: str = "LR") -> Dict:
-        """Process credit purchase via MTN Mobile Money with custom amount"""
+        """Process credit purchase via MTN Mobile Money with custom amount, and handle API key issuance/bonus on first purchase"""
+        from billing.models import APIKey, User
+        from billing.db import SessionLocal
+        from billing.api_key_utils import generate_api_key
         try:
-            # Convert amount to float if it's a string
             amount = float(amount)
-            
             credit_info = self.get_credit_packages()
-            
-            # Validate minimum amount
+            print(f"[DEBUG] process_credit_purchase: amount={amount}, minimum={credit_info['minimum_purchase']}")
             if amount < credit_info["minimum_purchase"]:
                 return {"success": False, "error": f"Minimum purchase is ${credit_info['minimum_purchase']}"}
-            
-            # Calculate credits based on amount
             credits_to_add = int(amount * credit_info["credit_rate"])
-            
-            # Initialize MTN payment if available
+            bonus_credits = int(0.2 * credits_to_add)  # 20% bonus for first purchase
+            api_key_value = None
+            is_first_purchase = False
+            session = SessionLocal()
+            try:
+                # Check if user exists and if they have an API key
+                user = session.query(User).filter_by(id=user_id).first()
+                api_key_obj = session.query(APIKey).filter_by(user_id=user_id).first()
+                # Use first_payment_at to determine bonus
+                if user and user.first_payment_at is None:
+                    # First purchase: generate API key and apply bonus
+                    api_key_value = generate_api_key()
+                    new_api_key = APIKey(user_id=user_id, api_key=api_key_value)
+                    session.add(new_api_key)
+                    credits_to_add += bonus_credits
+                    is_first_purchase = True
+                    # Set first_payment_at
+                    user.first_payment_at = datetime.utcnow()
+                    session.commit()
+                else:
+                    api_key_value = api_key_obj.api_key if api_key_obj else None
+            except Exception as e:
+                session.rollback()
+                logger.error(f"DB error during API key check/generation: {e}")
+            finally:
+                session.close()
+            # ...existing code for MTN payment...
             if MTNMobileMoneyPayment:
                 try:
                     mtn_payment = MTNMobileMoneyPayment(
                         subscription_key=os.getenv('MTN_SUBSCRIPTION_KEY', 'b60e7311554c49948e4b4be2f0b268b3'),
                         api_user=os.getenv('MTN_API_USER', 'd12bc032-0a43-4bfd-88c7-a4b0a4ea149d'),
                         api_key=os.getenv('MTN_API_KEY', '6f1926714253462eb67a226162809a28'),
-                        environment="production",  # Use production for live payments
+                        environment="production",
                         target_environment="mtnliberia"
                     )
-                    
-                    # Generate unique reference ID
-                    # Generate proper UUID for MTN payment reference
                     reference_id = str(uuid.uuid4())
-                    
-                    # Process payment with custom amount
                     result = mtn_payment.request_payment_custom(
                         phone_number=phone_number,
                         amount=amount,
@@ -277,28 +295,26 @@ class PaymentProcessor:
                         description=f"{credits_to_add} NexusAI Credits (${amount})"
                     )
                 except Exception as e:
-                    print(f"MTN Payment initialization/processing error: {e}")
+                    logger.error(f"MTN Payment initialization/processing error: {e}")
                     import traceback
                     traceback.print_exc()
                     return {"success": False, "error": f"Payment processing error: {str(e)}"}
-                
+                logger.info(f"MTN Payment result: {getattr(result, 'success', None)}, status: {getattr(result, 'status', None)}, message: {getattr(result, 'message', None)}")
+                if hasattr(result, 'raw_response'):
+                    logger.info(f"MTN Payment raw response: {getattr(result, 'raw_response', None)}")
                 if result.success and result.status == "pending":
-                    # Payment was initiated successfully, now we need to poll for completion
                     logger.info(f"Payment initiated. Reference ID: {reference_id}. Polling for completion...")
-                    
-                    # Poll for payment completion
                     import time
-                    max_wait_time = 60   # 1 minute for testing (should be longer in production)
-                    poll_interval = 5    # 5 seconds
+                    max_wait_time = 60
+                    poll_interval = 5
                     elapsed_time = 0
-                    
                     while elapsed_time < max_wait_time:
                         time.sleep(poll_interval)
                         elapsed_time += poll_interval
-                        
-                        # Check payment status
                         status_result = mtn_payment.check_payment_status(reference_id)
-                        logger.info(f"Payment status check: {status_result.status}")
+                        logger.info(f"Payment status check: {status_result.status}, message: {getattr(status_result, 'message', None)}")
+                        if hasattr(status_result, 'raw_response'):
+                            logger.info(f"Payment status raw response: {getattr(status_result, 'raw_response', None)}")
                         
                         if status_result.status == "successful":
                             # Payment completed successfully - add credits

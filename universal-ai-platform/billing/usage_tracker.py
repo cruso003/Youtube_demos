@@ -291,68 +291,30 @@ class UsageTracker:
             logger.error(f"Failed to get usage summary: {e}")
             return {}
     
-    async def calculate_bill(self, client_id: str, plan_id: str, start_date: datetime, end_date: datetime) -> Dict:
-        """Calculate bill for a client based on usage and plan"""
+    async def calculate_bill(self, client_id: str, start_date: datetime, end_date: datetime) -> Dict:
+        """Calculate bill for a client based on credit usage only"""
         try:
-            # Get plan details
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("SELECT * FROM billing_plans WHERE plan_id = ?", (plan_id,))
-                plan_row = cursor.fetchone()
-                
-                if not plan_row:
-                    raise ValueError(f"Plan {plan_id} not found")
-                
-                # Convert row to plan object
-                plan = BillingPlan(
-                    plan_id=plan_row[0], name=plan_row[1], price_per_session=plan_row[2],
-                    price_per_message=plan_row[3], price_per_image=plan_row[4], price_per_minute=plan_row[5],
-                    included_sessions=plan_row[6], included_messages=plan_row[7], 
-                    included_images=plan_row[8], included_minutes=plan_row[9]
-                )
-            
-            # Get usage summary for the client (assuming agent_id corresponds to client_id)
             usage = await self.get_usage_summary(agent_id=client_id, start_date=start_date, end_date=end_date)
-            
-            # Calculate billable usage (usage above included amounts)
-            billable_sessions = max(0, usage["sessions"] - plan.included_sessions)
-            billable_messages = max(0, usage["messages"] - plan.included_messages)
-            billable_images = max(0, usage["images"] - plan.included_images)
-            billable_minutes = max(0, usage["total_duration_minutes"] - plan.included_minutes)
-            
-            # Calculate costs
-            session_cost = billable_sessions * plan.price_per_session
-            message_cost = billable_messages * plan.price_per_message
-            image_cost = billable_images * plan.price_per_image
-            minute_cost = billable_minutes * plan.price_per_minute
-            
-            total_cost = session_cost + message_cost + image_cost + minute_cost
-            
+            credits_used = usage.get("messages", 0) * 1 \
+                + usage.get("images", 0) * 5 \
+                + usage.get("total_duration_minutes", 0) * 2
             return {
                 "client_id": client_id,
-                "plan": plan.to_dict(),
                 "billing_period": {
                     "start": start_date.isoformat(),
                     "end": end_date.isoformat()
                 },
                 "usage": usage,
-                "billable_usage": {
-                    "sessions": billable_sessions,
-                    "messages": billable_messages,
-                    "images": billable_images,
-                    "minutes": billable_minutes
-                },
-                "costs": {
-                    "sessions": round(session_cost, 4),
-                    "messages": round(message_cost, 4),
-                    "images": round(image_cost, 4),
-                    "minutes": round(minute_cost, 4),
-                    "total": round(total_cost, 4)
+                "credits_used": credits_used,
+                "credit_rate": {
+                    "message": 1,
+                    "image": 5,
+                    "minute": 2
                 }
             }
-            
         except Exception as e:
             logger.error(f"Failed to calculate bill: {e}")
-            return {}
+            return {"error": str(e)}
     
     # New multimodal usage tracking methods
     async def track_voice_processed(self, agent_id: str, session_id: str, duration_seconds: float, data_size_bytes: int):

@@ -31,6 +31,12 @@ services:
       - PORT=8000
       - HOST=0.0.0.0
       
+      # Payment Provider Configuration
+      - MTN_SUBSCRIPTION_KEY=${MTN_SUBSCRIPTION_KEY}
+      - MTN_API_USER=${MTN_API_USER}
+      - MTN_API_KEY=${MTN_API_KEY}
+      - DASHBOARD_URL=${DASHBOARD_URL}
+      
     depends_on:
       - db
       - redis

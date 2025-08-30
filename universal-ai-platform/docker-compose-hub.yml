@@ -31,6 +31,13 @@ services:
       - PORT=8000
       - HOST=0.0.0.0
       
+      # Payment Provider (MTN Mobile Money) Configuration
+      - MTN_SUBSCRIPTION_KEY=${MTN_SUBSCRIPTION_KEY}
+      - MTN_API_USER=${MTN_API_USER}
+      - MTN_API_KEY=${MTN_API_KEY}
+      - MTN_TARGET_ENVIRONMENT=${MTN_TARGET_ENVIRONMENT}
+      - MTN_BASE_URL=${MTN_BASE_URL}
+      # Add any other payment provider envs as needed
     depends_on:
       - db
       - redis
