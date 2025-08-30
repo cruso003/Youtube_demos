@@ -6,8 +6,11 @@ import bcrypt
 import jwt
 import uuid
 import os
+import logging
 from datetime import datetime, timedelta
 from functools import wraps
+
+logger = logging.getLogger(__name__)
 
 # Setup DB connection
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/nexusai")
@@ -119,7 +122,7 @@ def login():
     finally:
         session.close()
 
-# Generate API key for service consumption (requires email/password)
+# Generate API key for service consumption (requires email/password AND sufficient credits)
 @auth_bp.route('/api/v1/auth/api-key', methods=['POST'])
 def generate_api_key():
     data = request.json
@@ -134,16 +137,27 @@ def generate_api_key():
         if not user.is_active:
             return jsonify({'error': 'User is inactive'}), 403
 
-        # Check if user already has an active API key
-        existing_key = session.query(APIKey).filter_by(user_id=user.id, revoked=False).first()
-        if existing_key:
+        # CRITICAL: Check if user has sufficient credits for API key generation
+        from billing.credit_manager import LocalCreditManager
+        credit_manager = LocalCreditManager()
+        credit_check = credit_manager.can_generate_api_key(str(user.id))
+        
+        if not credit_check['can_generate']:
+            if credit_check.get('is_first_key', True):
+                message = f'First API key requires {credit_check["required_credits"]} credits (${credit_check["required_credits"]/1000}) to verify payment. You need {credit_check["deficit"]} more credits.'
+            else:
+                message = f'You need at least 1 credit to generate additional API keys. Current balance: {credit_check["current_credits"]} credits.'
+            
             return jsonify({
-                'message': 'API key already exists',
-                'api_key': existing_key.api_key,
-                'created_at': existing_key.created_at.isoformat() if existing_key.created_at else None
-            }), 200
+                'error': 'Insufficient credits to generate API key',
+                'current_credits': credit_check['current_credits'],
+                'required_credits': credit_check['required_credits'],
+                'deficit': credit_check['deficit'],
+                'is_first_key': credit_check.get('is_first_key', True),
+                'message': message
+            }), 402  # Payment Required
 
-        # Generate new API key
+        # Generate new API key (allow multiple keys per user)
         api_key_value = f"nexus_{uuid.uuid4().hex[:20]}"
         new_key = APIKey(user_id=user.id, api_key=api_key_value)
         session.add(new_key)
@@ -153,7 +167,8 @@ def generate_api_key():
             'message': 'API key generated successfully',
             'api_key': api_key_value,
             'user_id': str(user.id),
-            'created_at': new_key.created_at.isoformat() if new_key.created_at else None
+            'created_at': new_key.created_at.isoformat() if new_key.created_at else None,
+            'current_credits': credit_check['current_credits']
         }), 201
     finally:
         session.close()
@@ -334,6 +349,20 @@ def create_api_key(user_id):
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
+        # CRITICAL: Check if user has sufficient credits for API key generation
+        from billing.credit_manager import LocalCreditManager
+        credit_manager = LocalCreditManager()
+        credit_check = credit_manager.can_generate_api_key(user_id)
+        
+        if not credit_check['can_generate']:
+            return jsonify({
+                'error': 'Insufficient credits to generate API key',
+                'current_credits': credit_check['current_credits'],
+                'required_credits': credit_check['required_credits'],
+                'deficit': credit_check['deficit'],
+                'message': f'User needs {credit_check["deficit"]} more credits to generate an API key.'
+            }), 402  # Payment Required
+        
         api_key_value = f"nexus_{uuid.uuid4().hex[:20]}"
         key = APIKey(user_id=user_id, api_key=api_key_value)
         session.add(key)
@@ -343,7 +372,8 @@ def create_api_key(user_id):
             'id': str(key.id), 
             'api_key': key.api_key, 
             'created_at': key.created_at.isoformat() if key.created_at else None, 
-            'revoked': key.revoked
+            'revoked': key.revoked,
+            'current_credits': credit_check['current_credits']
         })
     finally:
         session.close()
@@ -380,17 +410,182 @@ def list_credits(user_id):
     
     session = Session()
     try:
+        # Get current credit balance
+        user = session.query(User).filter_by(id=user_id).first()
+        current_balance = user.credit_balance if user else 0
+        
+        # Get credit transactions
         txs = session.query(CreditTransaction).filter_by(user_id=user_id).all()
-        return jsonify([
-            {
-                'id': str(t.id), 
-                'credits': t.credits, 
-                'amount_usd': t.amount_usd, 
-                'transaction_id': t.transaction_id, 
-                'description': t.description, 
-                'created_at': t.created_at.isoformat() if t.created_at else None
-            }
-            for t in txs
-        ])
+        
+        return jsonify({
+            'current_balance': current_balance,
+            'transactions': [
+                {
+                    'id': str(t.id), 
+                    'credits': t.credits, 
+                    'amount_usd': t.amount_usd, 
+                    'transaction_id': t.transaction_id, 
+                    'description': t.description, 
+                    'created_at': t.created_at.isoformat() if t.created_at else None
+                }
+                for t in txs
+            ]
+        })
+    finally:
+        session.close()
+
+# API Usage Analytics Endpoints
+@auth_bp.route('/api/v1/users/<user_id>/usage/analytics', methods=['GET'])
+@require_jwt_auth()
+def get_usage_analytics(user_id):
+    """Get detailed usage analytics for user across all API keys"""
+    # Users can only view their own analytics unless they're admin
+    if (request.current_user.get('user_id') != user_id and 
+        request.current_user.get('role') not in ['ADMIN', 'SUPER_ADMIN']):
+        return jsonify({'error': 'Insufficient permissions'}), 403
+    
+    try:
+        days = int(request.args.get('days', 30))  # Default to 30 days
+        days = max(1, min(days, 365))  # Limit between 1-365 days
+        
+        from billing.api_usage_tracker import APIUsageTracker
+        usage_tracker = APIUsageTracker()
+        analytics = usage_tracker.get_usage_analytics_by_user(user_id, days)
+        
+        return jsonify({
+            'status': 'success',
+            'user_id': user_id,
+            'analytics': analytics
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting usage analytics: {e}")
+        return jsonify({
+            'error': 'Failed to get usage analytics',
+            'message': str(e)
+        }), 500
+
+@auth_bp.route('/api/v1/users/<user_id>/usage/models', methods=['GET'])
+@require_jwt_auth()
+def get_model_usage_breakdown(user_id):
+    """Get cost breakdown by AI model for user"""
+    # Users can only view their own analytics unless they're admin
+    if (request.current_user.get('user_id') != user_id and 
+        request.current_user.get('role') not in ['ADMIN', 'SUPER_ADMIN']):
+        return jsonify({'error': 'Insufficient permissions'}), 403
+    
+    try:
+        days = int(request.args.get('days', 30))
+        days = max(1, min(days, 365))
+        
+        from billing.api_usage_tracker import APIUsageTracker
+        usage_tracker = APIUsageTracker()
+        breakdown = usage_tracker.get_model_cost_breakdown(user_id, days)
+        
+        return jsonify({
+            'status': 'success',
+            'user_id': user_id,
+            'model_breakdown': breakdown
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting model breakdown: {e}")
+        return jsonify({
+            'error': 'Failed to get model breakdown',
+            'message': str(e)
+        }), 500
+
+@auth_bp.route('/api/v1/api-keys/<api_key>/usage', methods=['GET'])
+@require_jwt_auth()
+def get_api_key_usage(api_key):
+    """Get usage records for specific API key"""
+    session = Session()
+    try:
+        # Verify API key belongs to user (or user is admin)
+        key_obj = session.query(APIKey).filter_by(api_key=api_key).first()
+        if not key_obj:
+            return jsonify({'error': 'API key not found'}), 404
+        
+        # Check permissions
+        if (request.current_user.get('user_id') != str(key_obj.user_id) and 
+            request.current_user.get('role') not in ['ADMIN', 'SUPER_ADMIN']):
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        # Get usage records
+        days = int(request.args.get('days', 30))
+        limit = int(request.args.get('limit', 100))
+        days = max(1, min(days, 365))
+        limit = max(1, min(limit, 1000))
+        
+        from datetime import datetime, timedelta
+        start_date = datetime.utcnow() - timedelta(days=days)
+        
+        from billing.api_usage_tracker import APIUsageTracker
+        usage_tracker = APIUsageTracker()
+        usage_records = usage_tracker.get_usage_by_api_key(api_key, start_date, limit=limit)
+        
+        return jsonify({
+            'status': 'success',
+            'api_key': f"{api_key[:8]}...{api_key[-4:]}",  # Masked for security
+            'usage_records': usage_records,
+            'period_days': days,
+            'total_records': len(usage_records)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting API key usage: {e}")
+        return jsonify({
+            'error': 'Failed to get API key usage',
+            'message': str(e)
+        }), 500
+    finally:
+        session.close()
+
+@auth_bp.route('/api/v1/users/<user_id>/usage/summary', methods=['GET'])
+@require_jwt_auth()
+def get_usage_summary_endpoint(user_id):
+    """Get simple usage summary with current credit balance"""
+    # Users can only view their own summary unless they're admin
+    if (request.current_user.get('user_id') != user_id and 
+        request.current_user.get('role') not in ['ADMIN', 'SUPER_ADMIN']):
+        return jsonify({'error': 'Insufficient permissions'}), 403
+    
+    session = Session()
+    try:
+        # Get current credit balance
+        user = session.query(User).filter_by(id=user_id).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        current_balance = user.credit_balance or 0
+        
+        # Get usage analytics for last 7 days (quick summary)
+        from billing.api_usage_tracker import APIUsageTracker
+        usage_tracker = APIUsageTracker()
+        analytics = usage_tracker.get_usage_analytics_by_user(user_id, days=7)
+        
+        # Get number of active API keys
+        active_keys = session.query(APIKey).filter_by(user_id=user_id, revoked=False).count()
+        
+        return jsonify({
+            'status': 'success',
+            'user_id': user_id,
+            'current_credit_balance': current_balance,
+            'active_api_keys': active_keys,
+            'last_7_days': {
+                'total_requests': analytics.get('total_statistics', {}).get('total_requests', 0),
+                'total_credits_used': analytics.get('total_statistics', {}).get('total_credits', 0),
+                'total_cost': analytics.get('total_statistics', {}).get('total_cost', 0.0),
+                'models_used': analytics.get('total_statistics', {}).get('models_used', [])
+            },
+            'top_consuming_keys': analytics.get('top_consuming_keys', [])[:3]  # Top 3
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting usage summary: {e}")
+        return jsonify({
+            'error': 'Failed to get usage summary',
+            'message': str(e)
+        }), 500
     finally:
         session.close()

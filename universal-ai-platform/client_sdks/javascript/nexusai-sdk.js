@@ -4,6 +4,128 @@
  * https://nexus.bits-innovate.com
  */
 
+// Service configuration enums and classes
+const AIModel = {
+    GPT_4O_MINI: 'gpt-4o-mini',      // 1 credit per 1K tokens
+    GPT_4O: 'gpt-4o',                // 8 credits per 1K tokens
+    GPT_4: 'gpt-4',                  // 25 credits per 1K tokens
+    CLAUDE_3_HAIKU: 'claude-3-haiku',     // 1 credit per 1K tokens
+    CLAUDE_3_SONNET: 'claude-3-sonnet',   // 12 credits per 1K tokens
+    GPT_4_VISION: 'gpt-4-vision',         // 50 credits per image
+    CLAUDE_3_VISION: 'claude-3-vision'    // 40 credits per image
+};
+
+const VoiceProvider = {
+    CARTESIA: 'cartesia',            // 0.8 credits per 1K chars (Primary TTS)
+    OPENAI_TTS: 'openai-tts',        // 1 credit per 1K chars (Backup TTS)
+    DEEPGRAM: 'deepgram',            // 8 credits per minute (Primary STT)
+    OPENAI_WHISPER: 'openai-whisper'     // 10 credits per minute (Backup STT)
+};
+
+const PhoneProvider = {
+    TWILIO: 'twilio',                // 20 credits per minute
+    TWILIO_INTERNATIONAL: 'twilio-intl'  // 35 credits per minute
+};
+
+class ServiceConfiguration {
+    constructor(options = {}) {
+        this.primaryAiModel = options.primaryAiModel || AIModel.GPT_4O_MINI;
+        this.fallbackAiModel = options.fallbackAiModel || null;
+        this.ttsProvider = options.ttsProvider || VoiceProvider.CARTESIA;
+        this.sttProvider = options.sttProvider || VoiceProvider.DEEPGRAM;
+        this.voiceEnabled = options.voiceEnabled || false;
+        this.visionModel = options.visionModel || AIModel.GPT_4_VISION;
+        this.visionEnabled = options.visionEnabled || false;
+        this.phoneProvider = options.phoneProvider || PhoneProvider.TWILIO;
+        this.phoneEnabled = options.phoneEnabled || false;
+        this.realtimeEnabled = options.realtimeEnabled || false;
+        this.maxCreditsPerRequest = options.maxCreditsPerRequest || null;
+        this.costOptimization = options.costOptimization !== undefined ? options.costOptimization : true;
+        this.servicePriorities = options.servicePriorities || {
+            cost: 'medium',
+            accuracy: 'medium',
+            speed: 'high'
+        };
+    }
+
+    toJSON() {
+        return {
+            primary_ai_model: this.primaryAiModel,
+            fallback_ai_model: this.fallbackAiModel,
+            tts_provider: this.ttsProvider,
+            stt_provider: this.sttProvider,
+            voice_enabled: this.voiceEnabled,
+            vision_model: this.visionModel,
+            vision_enabled: this.visionEnabled,
+            phone_provider: this.phoneProvider,
+            phone_enabled: this.phoneEnabled,
+            realtime_enabled: this.realtimeEnabled,
+            max_credits_per_request: this.maxCreditsPerRequest,
+            cost_optimization: this.costOptimization,
+            service_priorities: this.servicePriorities
+        };
+    }
+}
+
+class ServicePresets {
+    static costOptimized() {
+        return new ServiceConfiguration({
+            primaryAiModel: AIModel.GPT_4O_MINI,
+            ttsProvider: VoiceProvider.CARTESIA,
+            sttProvider: VoiceProvider.DEEPGRAM,
+            visionModel: AIModel.GPT_4_VISION,
+            phoneProvider: PhoneProvider.TWILIO,
+            costOptimization: true,
+            maxCreditsPerRequest: 50,
+            servicePriorities: { cost: 'high', accuracy: 'medium', speed: 'medium' }
+        });
+    }
+
+    static premiumQuality() {
+        return new ServiceConfiguration({
+            primaryAiModel: AIModel.GPT_4,
+            fallbackAiModel: AIModel.GPT_4O,
+            ttsProvider: VoiceProvider.CARTESIA,
+            sttProvider: VoiceProvider.OPENAI_WHISPER,
+            visionModel: AIModel.GPT_4_VISION,
+            phoneProvider: PhoneProvider.TWILIO,
+            costOptimization: false,
+            servicePriorities: { cost: 'low', accuracy: 'high', speed: 'medium' }
+        });
+    }
+
+    static balanced() {
+        return new ServiceConfiguration({
+            primaryAiModel: AIModel.GPT_4O,
+            fallbackAiModel: AIModel.GPT_4O_MINI,
+            ttsProvider: VoiceProvider.CARTESIA,
+            sttProvider: VoiceProvider.DEEPGRAM,
+            visionModel: AIModel.GPT_4_VISION,
+            phoneProvider: PhoneProvider.TWILIO,
+            costOptimization: true,
+            maxCreditsPerRequest: 200,
+            servicePriorities: { cost: 'medium', accuracy: 'high', speed: 'high' }
+        });
+    }
+
+    static emergencyServices() {
+        return new ServiceConfiguration({
+            primaryAiModel: AIModel.GPT_4O,
+            fallbackAiModel: AIModel.GPT_4,
+            ttsProvider: VoiceProvider.CARTESIA,
+            sttProvider: VoiceProvider.OPENAI_WHISPER,
+            visionModel: AIModel.GPT_4_VISION,
+            phoneProvider: PhoneProvider.TWILIO,
+            voiceEnabled: true,
+            visionEnabled: true,
+            phoneEnabled: true,
+            realtimeEnabled: true,
+            costOptimization: false,
+            servicePriorities: { cost: 'low', accuracy: 'high', speed: 'high' }
+        });
+    }
+}
+
 class NexusAIClient {
     /**
      * Initialize the NexusAI client
@@ -71,11 +193,18 @@ class NexusAIClient {
      * @returns {Promise<object>} Session information
      */
     async createAgent(config) {
+        const customSettings = { ...config.customSettings } || {};
+        
+        // Include service configuration in custom settings if provided
+        if (config.serviceConfiguration) {
+            customSettings.service_configuration = config.serviceConfiguration.toJSON();
+        }
+        
         const payload = {
             instructions: config.instructions,
             capabilities: config.capabilities || ['text'],
             business_logic_adapter: config.businessLogicAdapter || null,
-            custom_settings: config.customSettings || {},
+            custom_settings: customSettings,
             client_id: config.clientId || null
         };
 
@@ -162,12 +291,153 @@ class NexusAIClient {
 
 
     /**
+     * Get credit-based billing information
+     * @param {string} clientId - Client identifier
+     * @param {Date} startDate - Start date for billing period
+     * @param {Date} endDate - End date for billing period
+     * @returns {Promise<object>} Billing information (credit usage)
+     */
+    async getBillingInfo(clientId, startDate = null, endDate = null) {
+        let url = `/api/v1/billing/${clientId}`;
+        const params = new URLSearchParams();
+
+        if (startDate) {
+            params.append('start_date', startDate.toISOString());
+        }
+        if (endDate) {
+            params.append('end_date', endDate.toISOString());
+        }
+
+        if (params.toString()) {
+            url += `?${params.toString()}`;
+        }
+
+        return await this.request(url);
+    }
+
+    /**
      * List all active agent sessions
      * @returns {Promise<array>} List of active sessions
      */
     async listActiveSessions() {
         const response = await this.request('/api/v1/agents');
         return response.sessions || [];
+    }
+
+    /**
+     * Estimate cost for a multi-service workflow
+     * @param {object} workflowDescription - Description of expected usage
+     * @param {ServiceConfiguration} serviceConfig - Service configuration to use for estimates
+     * @returns {object} Cost estimation breakdown
+     */
+    estimateWorkflowCost(workflowDescription, serviceConfig = null) {
+        if (!serviceConfig) {
+            serviceConfig = ServicePresets.costOptimized();
+        }
+
+        const estimatedCost = {
+            totalCredits: 0,
+            totalCostUsd: 0.0,
+            serviceBreakdown: [],
+            warnings: []
+        };
+
+        // AI model costs
+        if (workflowDescription.aiTokens) {
+            const modelCosts = {
+                'gpt-4o-mini': [1, 0.00015],
+                'gpt-4o': [8, 0.0025],
+                'gpt-4': [25, 0.03],
+                'claude-3-haiku': [1, 0.00025],
+                'claude-3-sonnet': [12, 0.003]
+            };
+
+            const [creditsPerK, costPerK] = modelCosts[serviceConfig.primaryAiModel] || [1, 0.001];
+            const tokens = workflowDescription.aiTokens;
+
+            const aiCredits = Math.max(1, Math.floor((tokens / 1000) * creditsPerK));
+            const aiCost = (tokens / 1000) * costPerK;
+
+            estimatedCost.totalCredits += aiCredits;
+            estimatedCost.totalCostUsd += aiCost;
+            estimatedCost.serviceBreakdown.push({
+                service: 'AI Model',
+                provider: serviceConfig.primaryAiModel,
+                credits: aiCredits,
+                costUsd: aiCost
+            });
+        }
+
+        // Voice services
+        if (workflowDescription.voiceMinutes && serviceConfig.voiceEnabled) {
+            const minutes = workflowDescription.voiceMinutes;
+
+            // STT cost
+            const sttCredits = serviceConfig.sttProvider === 'deepgram' ? 8 : 10;
+            const sttCreditsCost = Math.max(1, Math.floor(minutes * sttCredits));
+            const sttCost = minutes * (serviceConfig.sttProvider === 'deepgram' ? 0.0043 : 0.006);
+
+            // TTS cost
+            const chars = Math.floor(minutes * 150); // 150 chars per minute estimate
+            const ttsRate = serviceConfig.ttsProvider === 'cartesia' ? 0.8 : 1.0;
+            const ttsCreditsCost = Math.max(1, Math.floor((chars / 1000) * ttsRate));
+            const ttsCost = chars * (serviceConfig.ttsProvider === 'cartesia' ? 0.000011 : 0.000015);
+
+            const voiceCredits = sttCreditsCost + ttsCreditsCost;
+            const voiceCost = sttCost + ttsCost;
+
+            estimatedCost.totalCredits += voiceCredits;
+            estimatedCost.totalCostUsd += voiceCost;
+            estimatedCost.serviceBreakdown.push({
+                service: 'Voice Processing',
+                provider: `${serviceConfig.sttProvider} + ${serviceConfig.ttsProvider}`,
+                credits: voiceCredits,
+                costUsd: voiceCost
+            });
+        }
+
+        // Phone services
+        if (workflowDescription.phoneMinutes && serviceConfig.phoneEnabled) {
+            const minutes = workflowDescription.phoneMinutes;
+            const phoneCredits = Math.max(1, Math.floor(minutes * (serviceConfig.phoneProvider === 'twilio' ? 20 : 35)));
+            const phoneCost = minutes * (serviceConfig.phoneProvider === 'twilio' ? 0.0085 : 0.015);
+
+            estimatedCost.totalCredits += phoneCredits;
+            estimatedCost.totalCostUsd += phoneCost;
+            estimatedCost.serviceBreakdown.push({
+                service: 'Phone Service',
+                provider: serviceConfig.phoneProvider,
+                credits: phoneCredits,
+                costUsd: phoneCost
+            });
+        }
+
+        // Vision services
+        if (workflowDescription.imageCount && serviceConfig.visionEnabled) {
+            const images = workflowDescription.imageCount;
+            const visionCredits = images * (serviceConfig.visionModel.includes('gpt-4o') ? 40 : 50);
+            const visionCost = images * (serviceConfig.visionModel.includes('gpt-4o') ? 0.008 : 0.01);
+
+            estimatedCost.totalCredits += visionCredits;
+            estimatedCost.totalCostUsd += visionCost;
+            estimatedCost.serviceBreakdown.push({
+                service: 'Vision Analysis',
+                provider: serviceConfig.visionModel,
+                credits: visionCredits,
+                costUsd: visionCost
+            });
+        }
+
+        // Warnings
+        if (estimatedCost.totalCredits > 100) {
+            estimatedCost.warnings.push('High credit usage expected (>100 credits)');
+        }
+
+        if (serviceConfig.maxCreditsPerRequest && estimatedCost.totalCredits > serviceConfig.maxCreditsPerRequest) {
+            estimatedCost.warnings.push(`Exceeds max credits per request (${serviceConfig.maxCreditsPerRequest})`);
+        }
+
+        return estimatedCost;
     }
 }
 
@@ -355,4 +625,98 @@ class AgentSession {
             });
         }
     }
+}
+
+// Convenience functions
+function createSimpleAgent(
+    apiUrl = 'https://nexus.bits-innovate.com',
+    apiKey = null,
+    instructions = '',
+    capabilities = ['text'],
+    servicePreset = 'costOptimized'
+) {
+    let serviceConfig = null;
+    switch (servicePreset) {
+        case 'premiumQuality':
+            serviceConfig = ServicePresets.premiumQuality();
+            break;
+        case 'balanced':
+            serviceConfig = ServicePresets.balanced();
+            break;
+        case 'emergencyServices':
+            serviceConfig = ServicePresets.emergencyServices();
+            break;
+        default:
+            serviceConfig = ServicePresets.costOptimized();
+    }
+
+    const client = new NexusAIClient(apiUrl, apiKey);
+    const config = {
+        instructions,
+        capabilities,
+        serviceConfiguration: serviceConfig
+    };
+
+    return client.createAgent(config).then(result => {
+        const sessionId = result.session_id;
+        const session = new AgentSession(client, sessionId);
+        return [client, { id: result.agent_id }, session];
+    });
+}
+
+function createEmergencyAgent(
+    apiUrl = 'https://nexus.bits-innovate.com',
+    apiKey = null,
+    emergencyType = 'medical'
+) {
+    return createSimpleAgent(
+        apiUrl,
+        apiKey,
+        `You are an emergency ${emergencyType} assistant. Prioritize accuracy and clear communication.`,
+        ['text', 'voice', 'phone'],
+        'emergencyServices'
+    );
+}
+
+function createLearningAgent(
+    apiUrl = 'https://nexus.bits-innovate.com',
+    apiKey = null,
+    subject = 'general'
+) {
+    return createSimpleAgent(
+        apiUrl,
+        apiKey,
+        `You are a ${subject} tutor. Provide clear, educational responses with examples.`,
+        ['text', 'voice'],
+        'costOptimized'
+    );
+}
+
+// Export for Node.js and browser
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        NexusAIClient,
+        AgentSession,
+        ServiceConfiguration,
+        ServicePresets,
+        AIModel,
+        VoiceProvider,
+        PhoneProvider,
+        createSimpleAgent,
+        createEmergencyAgent,
+        createLearningAgent
+    };
+} else if (typeof window !== 'undefined') {
+    window.NexusAI = {
+        NexusAIClient,
+        AgentSession,
+        ServiceConfiguration,
+        ServicePresets,
+        AIModel,
+        VoiceProvider,
+        PhoneProvider,
+        createSimpleAgent,
+        createEmergencyAgent,
+        createLearningAgent
+    };
 }

@@ -67,17 +67,17 @@ def check_api_key_and_credits(estimated_tokens=100):
                         "message": "Invalid API key format. Use API key, not JWT token."
                     }), 401
                 
-                # Check credits via payment processor
+                # Check credits via local credit manager (more reliable)
                 try:
-                    from billing.payment_processor import PaymentProcessor
-                    payment_processor = PaymentProcessor()
-                    credit_check = payment_processor.verify_api_key_credits(api_key, estimated_tokens)
+                    from billing.credit_manager import LocalCreditManager
+                    credit_manager = LocalCreditManager()
+                    credit_check = credit_manager.verify_api_key_credits(api_key, estimated_tokens)
                     
                     if not credit_check.get('valid', False):
-                        if credit_check.get('error') == 'Could not verify credits':
+                        if credit_check.get('error') == 'Invalid API key':
                             return jsonify({
                                 "status": "error",
-                                "message": "Invalid API key",
+                                "message": "Invalid or inactive API key",
                                 "error_code": "invalid_api_key"
                             }), 401
                         else:
@@ -92,10 +92,11 @@ def check_api_key_and_credits(estimated_tokens=100):
                     request.api_key = api_key
                     request.credit_info = credit_check
                     
-                except ImportError:
+                except ImportError as e:
+                    logger.error(f"Credit manager import error: {e}")
                     return jsonify({
                         "status": "error",
-                        "message": "Payment processor not available"
+                        "message": "Credit verification system unavailable"
                     }), 503
                 
                 return f(*args, **kwargs)
@@ -341,22 +342,92 @@ def send_message(session_id: str):
                             response_content = completion.choices[0].message.content
                             logger.info(f"OpenAI response generated: {len(response_content)} characters")
                             
-                            # Record usage for credit billing
-                            if hasattr(request, 'api_key'):
-                                tokens_used = completion.usage.total_tokens if completion.usage else 150
+                            # Record detailed multi-service usage and deduct credits
+                            if hasattr(request, 'api_key') and hasattr(request, 'credit_info'):
+                                # Get token usage from OpenAI completion
+                                input_tokens = completion.usage.prompt_tokens if completion.usage else 75
+                                output_tokens = completion.usage.completion_tokens if completion.usage else 75
+                                total_tokens = completion.usage.total_tokens if completion.usage else 150
+                                
+                                # Determine model from adapter settings or default
+                                model_name = "gpt-4o-mini"  # Default
+                                if agent_config.custom_settings:
+                                    service_config = agent_config.custom_settings.get('service_configuration', {})
+                                    if 'primary_ai_model' in service_config:
+                                        model_name = service_config['primary_ai_model']
+                                
                                 try:
-                                    from billing.payment_processor import PaymentProcessor
-                                    payment_processor = PaymentProcessor()
-                                    usage_result = payment_processor.record_api_usage(
+                                    # Start multi-service workflow tracking
+                                    from billing.multi_service_tracker import MultiServiceTracker, ServiceType, WorkflowTemplates
+                                    multi_tracker = MultiServiceTracker()
+                                    
+                                    # Determine workflow type based on adapter
+                                    workflow_name = "text_chat"
+                                    if agent_config.business_logic_adapter == "emergencyservices":
+                                        workflow_name = "emergency_text_chat"
+                                    elif agent_config.business_logic_adapter == "languagelearning":
+                                        workflow_name = "language_learning_chat"
+                                    
+                                    workflow_id = multi_tracker.start_workflow_tracking(
                                         api_key=request.api_key,
+                                        user_id=request.credit_info['user_id'],
+                                        workflow_name=workflow_name,
                                         endpoint="/api/v1/agent/message",
-                                        tokens_used=tokens_used,
-                                        model="gpt-4o-mini"
+                                        session_id=session_id,
+                                        business_adapter=agent_config.business_logic_adapter
                                     )
-                                    if not usage_result.get('success', True):
-                                        logger.warning(f"Failed to record usage: {usage_result}")
-                                except ImportError:
-                                    logger.warning("Payment processor not available for usage tracking")
+                                    
+                                    # Add AI model usage
+                                    multi_tracker.add_service_usage(
+                                        workflow_id=workflow_id,
+                                        service_type=ServiceType.GPT,
+                                        provider=model_name,
+                                        units_consumed=total_tokens,
+                                        unit_type="tokens",
+                                        metadata={
+                                            "input_tokens": input_tokens,
+                                            "output_tokens": output_tokens,
+                                            "business_adapter": agent_config.business_logic_adapter
+                                        }
+                                    )
+                                    
+                                    # Complete workflow and get total credits
+                                    workflow_result = multi_tracker.complete_workflow(workflow_id, status_code=200)
+                                    
+                                    if workflow_result.get('success'):
+                                        credits_to_deduct = workflow_result['total_credits_used']
+                                        
+                                        # Deduct credits from user balance
+                                        from billing.credit_manager import LocalCreditManager
+                                        credit_manager = LocalCreditManager()
+                                        deduction_result = credit_manager.deduct_credits(
+                                            user_id=request.credit_info['user_id'],
+                                            credits=credits_to_deduct,
+                                            description=f"Multi-service workflow '{workflow_name}': {total_tokens} tokens for {model_name}"
+                                        )
+                                        
+                                        if not deduction_result.get('success', False):
+                                            logger.warning(f"Failed to deduct credits: {deduction_result}")
+                                        else:
+                                            logger.info(f"Workflow '{workflow_name}': Deducted {credits_to_deduct} credits. New balance: {deduction_result['new_balance']}")
+                                    
+                                except ImportError as e:
+                                    logger.warning(f"Multi-service tracking not available: {e}")
+                                    # Fallback to basic tracking
+                                    from billing.api_usage_tracker import APIUsageTracker, ModelPricing
+                                    usage_tracker = APIUsageTracker()
+                                    cost_breakdown = ModelPricing.calculate_cost_and_credits(model_name, input_tokens, output_tokens)
+                                    credits_to_deduct = cost_breakdown["credits_used"]
+                                    
+                                    from billing.credit_manager import LocalCreditManager
+                                    credit_manager = LocalCreditManager()
+                                    credit_manager.deduct_credits(
+                                        user_id=request.credit_info['user_id'],
+                                        credits=credits_to_deduct,
+                                        description=f"Basic AI usage: {total_tokens} tokens for {model_name}"
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Error in multi-service tracking: {e}")
                             
                     except Exception as adapter_error:
                         logger.error(f"Adapter processing error: {adapter_error}")

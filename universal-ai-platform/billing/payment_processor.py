@@ -124,34 +124,6 @@ class PaymentProcessor:
             "available_payment_methods": [m.name for m in self.get_available_payment_methods(country_code)]
         }
     
-    def create_subscription(self, client_id: str, plan_id: str, payment_method_id: str, 
-                          country_code: str, billing_cycle: str = "monthly") -> Dict:
-        """Create a new subscription"""
-        
-        pricing = self.calculate_pricing_for_country(plan_id, country_code)
-        price = pricing["monthly_price"] if billing_cycle == "monthly" else pricing["yearly_price"]
-        
-        # In a real implementation, you would:
-        # 1. Create payment intent with chosen provider (Flutterwave, Paystack, etc.)
-        # 2. Handle payment confirmation
-        # 3. Create subscription record
-        
-        subscription = {
-            "subscription_id": f"sub_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{client_id}",
-            "client_id": client_id,
-            "plan_id": plan_id,
-            "status": "pending_payment",
-            "price": price,
-            "currency": "USD",
-            "billing_cycle": billing_cycle,
-            "payment_method": payment_method_id,
-            "country_code": country_code,
-            "created_at": datetime.now().isoformat(),
-            "next_billing_date": (datetime.now() + timedelta(days=30 if billing_cycle == "monthly" else 365)).isoformat()
-        }
-        
-        return subscription
-    
     def handle_webhook(self, provider: str, webhook_data: Dict) -> Dict:
         """Handle payment webhook from providers"""
         
@@ -280,9 +252,9 @@ class PaymentProcessor:
             if MTNMobileMoneyPayment:
                 try:
                     mtn_payment = MTNMobileMoneyPayment(
-                        subscription_key=os.getenv('MTN_SUBSCRIPTION_KEY', 'b60e7311554c49948e4b4be2f0b268b3'),
-                        api_user=os.getenv('MTN_API_USER', 'd12bc032-0a43-4bfd-88c7-a4b0a4ea149d'),
-                        api_key=os.getenv('MTN_API_KEY', '6f1926714253462eb67a226162809a28'),
+                        subscription_key=os.getenv('MTN_SUBSCRIPTION_KEY', 'b.........'),
+                        api_user=os.getenv('MTN_API_USER', 'd1.........'),
+                        api_key=os.getenv('MTN_API_KEY', '6........'),
                         environment="production",
                         target_environment="mtnliberia"
                     )
